@@ -17,11 +17,13 @@ jobs:
         run: |
           apt-get update
           apt-get install -y meson ninja-build valac pkg-config libgtk-4-dev libgranite-7-dev \
-            libwebkitgtk-6.0-dev libsoup-3.0-dev libjson-glib-dev libwingpanel-9-dev \
+            libwebkitgtk-6.0-dev libsoup-3.0-dev libjson-glib-dev \
             desktop-file-utils appstream xvfb python3 python3-pytest
+          # The Wingpanel indicator needs wingpanel-9 (elementary OS 9); build it when the image has it.
+          if apt-get install -y libwingpanel-9-dev; then echo "INDICATOR=true" >> "$GITHUB_ENV"; else echo "INDICATOR=false" >> "$GITHUB_ENV"; fi
       - name: Build
         run: |
-          meson setup build -Dindicator=true
+          meson setup build -Dindicator=$INDICATOR
           meson compile -C build
       - name: Validate desktop entry and AppStream metadata
         run: |
@@ -30,8 +32,10 @@ jobs:
       - name: Summary helper unit tests
         run: python3 -m pytest -q tests
       - name: Render the indicator for every state
+        if: env.INDICATOR == 'true'
         run: indicator/probe/run-probe.sh build/indicator probe-out
       - uses: actions/upload-artifact@v4
+        if: env.INDICATOR == 'true'
         with:
           name: indicator-renders
           path: probe-out/*.png

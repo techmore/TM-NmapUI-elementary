@@ -17,7 +17,7 @@ This app never implements a second scanning engine; it gives the existing one a 
 
 ## Install
 
-On elementary OS 8 (Circe) or newer:
+On elementary OS 9 (the Wingpanel indicator needs `wingpanel-9`); the app itself also builds on elementary OS 8 with `-Dindicator=false`:
 
 ```bash
 git clone https://github.com/techmore/TM-NmapUI-elementary.git
