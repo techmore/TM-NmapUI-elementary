@@ -1,0 +1,2 @@
+option('indicator', type: 'boolean', value: true,
+       description: 'Build and install the Wingpanel scan-summary indicator (needs libwingpanel-9-dev)')

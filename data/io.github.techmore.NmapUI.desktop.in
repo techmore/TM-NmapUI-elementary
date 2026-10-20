@@ -1,0 +1,17 @@
+[Desktop Entry]
+Name=Network Scanner
+Comment=Scan and monitor your networks with Nmap
+Exec=@BINDIR@/@APP_ID@
+Icon=@APP_ID@
+Terminal=false
+Type=Application
+Categories=Network;System;Security;
+Keywords=nmap;scan;network;security;ports;devices;daedalus;
+StartupWMClass=@APP_ID@
+StartupNotify=true
+X-GNOME-UsesNotifications=true
+Actions=start-service;
+
+[Desktop Action start-service]
+Name=Start Scanner Service
+Exec=systemctl --user start nmapui.service

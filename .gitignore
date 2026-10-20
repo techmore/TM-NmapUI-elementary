@@ -1,0 +1,9 @@
+build/
+builddir/
+*.o
+*.so
+__pycache__/
+.pytest_cache/
+*.png
+!data/**/*.png
+.DS_Store

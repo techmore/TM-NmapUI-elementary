@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>@APP_ID@</id>
+  <launchable type="desktop-id">@APP_ID@.desktop</launchable>
+  <translation type="gettext">@APP_ID@</translation>
+  <metadata_license>CC0-1.0</metadata_license>
+  <name>Network Scanner</name>
+  <summary>Scan and monitor your networks with Nmap</summary>
+  <description>
+    <p>
+      Network Scanner is the elementary OS front end for TM-NmapUI. It discovers the devices on
+      your network, finds open ports and known vulnerabilities, keeps a history of every scan,
+      and produces printable PDF reports.
+    </p>
+    <p>
+      The scanner engine runs on this computer as a per-user service bound to 127.0.0.1. This app
+      gives it a native window with segmented tabs, a live scanning status chip, system light and
+      dark mode, desktop notifications when a scan finishes, and a Wingpanel indicator with a
+      scan summary and device list.
+    </p>
+  </description>
+  <content_rating type="oars-1.1" />
+  <url type="homepage">https://github.com/techmore/TM-NmapUI-elementary</url>
+  <url type="bugtracker">https://github.com/techmore/TM-NmapUI-elementary/issues</url>
+  <url type="help">https://github.com/techmore/TM-NmapUI</url>
+  <developer id="io.github.techmore">
+    <name>Techmore</name>
+  </developer>
+  <branding>
+    <color type="primary" scheme_preference="light">#64baff</color>
+    <color type="primary" scheme_preference="dark">#0d52bf</color>
+  </branding>
+  <custom>
+    <value key="x-appcenter-color-primary">#3689e6</value>
+    <value key="x-appcenter-color-primary-text">#ffffff</value>
+    <value key="x-appcenter-suggested-price">0</value>
+  </custom>
+  <provides>
+    <binary>@APP_ID@</binary>
+  </provides>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <releases>
+    <release version="0.1.0" date="2026-10-20">
+      <description>
+        <p>First native release: Granite window, segmented tabs, status chip, offline placeholder,
+          download toasts, scan-finished notifications, and the Wingpanel indicator.</p>
+      </description>
+    </release>
+  </releases>
+</component>
