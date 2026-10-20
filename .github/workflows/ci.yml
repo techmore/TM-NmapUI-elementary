@@ -12,8 +12,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # horus = elementary OS 8 (app only); next = the OS 9 development image (app + indicator).
-        image: [horus-unstable, next-unstable]
+        # tanit = elementary OS 9, the first release with GTK 4 Wingpanel (wingpanel-9) and WebKitGTK 6.0.
+        image: [tanit-unstable]
     container:
       image: ghcr.io/elementary/docker:${{ matrix.image }}
     steps:

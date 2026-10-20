@@ -17,7 +17,7 @@ This app never implements a second scanning engine; it gives the existing one a 
 
 ## Install
 
-On elementary OS 9 (the Wingpanel indicator needs `wingpanel-9`); the app itself also builds on elementary OS 8 with `-Dindicator=false`:
+On elementary OS 9 (Tanit), which ships GTK 4 Wingpanel (`wingpanel-9`) and WebKitGTK 6.0:
 
 ```bash
 git clone https://github.com/techmore/TM-NmapUI-elementary.git
@@ -86,7 +86,7 @@ desktop-file-validate build/data/io.github.techmore.NmapUI.desktop
 appstreamcli validate --no-net build/data/io.github.techmore.NmapUI.metainfo.xml
 ```
 
-CI runs the same steps in the `ghcr.io/elementary/docker:horus-unstable` container.
+CI runs the same steps in the `ghcr.io/elementary/docker:tanit-unstable` container.
 
 ## How it fits with the other repositories
 
