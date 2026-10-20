@@ -3,6 +3,17 @@
 The native elementary OS front end for [TM-NmapUI](https://github.com/techmore/TM-NmapUI):
 a Granite / GTK 4 window, a Wingpanel indicator and a per-user scanner service.
 
+![Network Scanner in dark mode while a scan runs](docs/screenshots/window-dark.png)
+
+<p>
+  <img src="docs/screenshots/window-light.png" alt="Light mode" width="49%">
+  <img src="docs/screenshots/window-offline.png" alt="Service not running" width="49%">
+</p>
+<p>
+  <img src="docs/screenshots/indicator-scanning.png" alt="Wingpanel indicator during a scan" width="32%">
+  <img src="docs/screenshots/indicator-attention.png" alt="Wingpanel indicator needing attention" width="32%">
+</p>
+
 | Piece | What it is |
 |---|---|
 | `src/` | **Network Scanner** (`io.github.techmore.NmapUI`), a Vala app. Pantheon headerbar with segmented tabs, a live status chip, system light/dark, scan-finished notifications, report download toasts, and a Granite placeholder that starts the service when it is down. |
