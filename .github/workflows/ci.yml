@@ -7,10 +7,15 @@ on:
 
 jobs:
   build:
-    name: Build (elementary OS 8 container)
+    name: Build (${{ matrix.image }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # horus = elementary OS 8 (app only); next = the OS 9 development image (app + indicator).
+        image: [horus-unstable, next-unstable]
     container:
-      image: ghcr.io/elementary/docker:horus-unstable
+      image: ghcr.io/elementary/docker:${{ matrix.image }}
     steps:
       - uses: actions/checkout@v5
       - name: Install build dependencies
@@ -37,5 +42,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: env.INDICATOR == 'true'
         with:
-          name: indicator-renders
+          name: indicator-renders-${{ matrix.image }}
           path: probe-out/*.png
