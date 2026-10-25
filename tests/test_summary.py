@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -178,3 +179,34 @@ def test_main_reads_independent_api_summaries_concurrently(monkeypatch, capsys):
     monkeypatch.setattr(summary, "network_info", lambda iface: {})
     assert summary.main() == 0
     assert json.loads(capsys.readouterr().out)["state"] == "idle"
+
+
+def test_strict_http_status_denial_stays_unknown_without_dashboard_credentials(monkeypatch, capsys):
+    observed = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            observed.append((self.headers.get("Cookie"), self.headers.get("Authorization")))
+            body = json.dumps(HEALTH if self.path == "/api/health" else {"error": "Unauthorized"}).encode()
+            self.send_response(200 if self.path == "/api/health" else 401)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setattr(summary, "BASE", f"http://127.0.0.1:{server.server_port}")
+        monkeypatch.setattr(summary, "network_info", lambda iface: {})
+        assert summary.main() == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["state"] == "unknown" and out["progress"] is None
+        assert len(observed) == 5 and all(pair == (None, None) for pair in observed)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
