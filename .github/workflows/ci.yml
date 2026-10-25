@@ -23,7 +23,7 @@ jobs:
           apt-get update
           apt-get install -y meson ninja-build valac pkg-config libgtk-4-dev libgranite-7-dev \
             libwebkitgtk-6.0-dev libsoup-3.0-dev libjson-glib-dev \
-            desktop-file-utils appstream xvfb dbus-x11 python3 python3-pytest python3-venv build-essential libwingpanel-9-dev xdotool tesseract-ocr nmap
+            desktop-file-utils appstream xvfb dbus-x11 python3 python3-pytest python3-venv python3-dev build-essential libwingpanel-9-dev xdotool tesseract-ocr nmap
       - name: Build
         run: |
           meson setup build -Dindicator=true
