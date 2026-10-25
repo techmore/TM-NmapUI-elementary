@@ -33,28 +33,44 @@ On elementary OS 9 (Tanit), which ships GTK 4 Wingpanel (`wingpanel-9`) and WebK
 ```bash
 git clone https://github.com/techmore/TM-NmapUI-elementary.git
 cd TM-NmapUI-elementary
-scripts/install.sh
+NMAPUI_REF=<reviewed-full-engine-commit> scripts/install.sh
 ```
 
 That builds and installs the app into `~/.local`, installs the Wingpanel indicator
 system-wide (sudo), pins **Network Scanner** to the dock, and runs `scripts/install-backend.sh`,
-which clones TM-NmapUI into `~/.local/share/nmapui/app`, creates its virtual environment,
+which clones a reviewed immutable TM-NmapUI revision into
+`~/.local/share/nmapui/releases/<commit>`, creates a private virtual environment,
 installs Chromium for PDF reports, and enables the loopback-only user service.
+This candidate requires an explicit full 40-character `NMAPUI_REF`; it never
+selects a moving branch or updates an existing development checkout.
 
 - `scripts/install.sh --no-indicator` skips the Wingpanel module; `--no-backend` skips the engine.
-- `NMAPUI_APP_DIR=~/Projects/TM-NmapUI scripts/install-backend.sh` runs the service from an existing checkout.
-- `NMAPUI_REF=<branch|tag|sha> scripts/install-backend.sh` pins the engine revision.
+- `NMAPUI_APP_DIR=~/Projects/TM-NmapUI NMAPUI_REF=<full-commit> scripts/install-backend.sh` clones committed source from an existing checkout without changing its branch, files or environment.
+- Re-running with another reviewed commit stages its dependencies before switching the managed service. A failed readiness check restores the previous unit; `scripts/install-backend.sh --rollback` switches back explicitly. Releases and scanner data are retained.
+- The installer refuses an unmanaged user unit, an active system scanner service, or another process serving port 9000. It never disables or removes development units. Use `--no-backend` when using an existing scanner service.
+- Put persistent operator settings in `~/.config/nmapui/backend.env`; updates preserve this file. Engine revision and source provenance are stored in each release's `.nmapui-release.json`.
 - The indicator loads at the next login; the installer never restarts Wingpanel.
 - Unprivileged scans use connect mode. SYN/OS/ARP scans need TM-NmapUI's root service
   (`packaging/ubuntu/install-service.sh`); nothing here grants raw-socket capabilities.
 
-Data stays private under `~/.local/share/nmapui` (engine) and `~/.local/share/nmapui-elementary`
-(web session and cookies). Remove everything with:
+Data stays under `~/.local/share/nmapui` (engine) and `~/.local/share/nmapui-elementary`
+(web session and cookies); new engine releases and generated units use private
+permissions. `scripts/uninstall.sh` removes the native app from `~/.local`;
+`scripts/uninstall.sh --backend` also disables and removes only its managed user
+service. Both preserve scanner data, settings, previous releases and UI profiles.
+`scripts/uninstall-backend.sh` removes just the managed user service.
+The system Wingpanel module is separate: remove its installed `libnmapui.so`
+from the `pkg-config --variable=indicatorsdir wingpanel-9` directory as an
+administrator, then log out and back in. The uninstaller never restarts Wingpanel
+or touches a system/root scanner service.
 
-```bash
-systemctl --user disable --now nmapui.service
-rm -rf ~/.config/systemd/user/nmapui.service ~/.local/share/nmapui ~/.local/share/nmapui-elementary ~/.cache/nmapui-elementary
-```
+This front end targets elementary OS 9's GTK 4 / Wingpanel 9 stack; OS 8 is not a
+validated target. The per-user engine has the desktop user's privileges, and
+`NoNewPrivileges=true` prevents privilege escalation. It is separate from the
+root-mode Ubuntu appliance installer: install that service independently for
+privileged scanning and use `--no-backend` here. Physical-host discovery,
+unattended soak, real Drive consent, and stable elementary desktop qualification
+remain release gates.
 
 ## Build from source
 

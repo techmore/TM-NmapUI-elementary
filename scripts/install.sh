@@ -6,6 +6,7 @@
 #   scripts/install.sh --no-indicator  # skip the Wingpanel module
 #   scripts/install.sh --no-backend    # skip scripts/install-backend.sh
 set -euo pipefail
+[[ $(id -u) != 0 ]] || { echo 'Run this installer as your desktop user, without sudo.' >&2; exit 1; }
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$here/.." && pwd)
 indicator=1; backend=1
@@ -16,6 +17,10 @@ for arg in "$@"; do
     *) echo "Usage: install.sh [--no-indicator] [--no-backend]" >&2; exit 2 ;;
   esac
 done
+
+if ((backend)) && [[ ! ${NMAPUI_REF:-} =~ ^[0-9a-fA-F]{40}$ ]]; then
+  echo 'Set NMAPUI_REF to a reviewed full engine commit SHA, or use --no-backend.' >&2; exit 2
+fi
 
 echo "== Build tools"
 tools=(meson ninja-build valac pkg-config libgtk-4-dev libgranite-7-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libjson-glib-dev gtk-update-icon-cache desktop-file-utils)
@@ -30,7 +35,9 @@ fi
 
 echo "== Build"
 build="$root/build"
-meson setup "$build" "$root" --prefix="$HOME/.local" -Dindicator=false --reconfigure >/dev/null
+setup_args=()
+[[ ! -f "$build/meson-private/coredata.dat" ]] || setup_args+=(--reconfigure)
+meson setup "$build" "$root" --prefix="$HOME/.local" -Dindicator=false "${setup_args[@]}" >/dev/null
 meson compile -C "$build"
 meson install -C "$build" >/dev/null
 echo "installed $HOME/.local/bin/io.github.techmore.NmapUI"
@@ -38,7 +45,7 @@ echo "installed $HOME/.local/bin/io.github.techmore.NmapUI"
 if ((indicator)); then
   echo "== Wingpanel indicator (system-wide)"
   ibuild=$(mktemp -d); trap 'rm -rf "$ibuild"' EXIT
-  meson setup "$ibuild" "$root/indicator" >/dev/null 2>&1 || meson setup "$ibuild" "$root" -Dindicator=true --prefix=/usr >/dev/null
+  meson setup "$ibuild" "$root" -Dindicator=true --prefix=/usr >/dev/null
   meson compile -C "$ibuild" >/dev/null
   indicators_dir=$(pkg-config --variable=indicatorsdir wingpanel-9)
   sudo install -m 0755 "$ibuild/indicator/libnmapui.so" "$indicators_dir/libnmapui.so"

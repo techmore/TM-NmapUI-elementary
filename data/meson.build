@@ -1,6 +1,7 @@
 desktop_conf = configuration_data()
 desktop_conf.set('APP_ID', app_id)
-desktop_conf.set('BINDIR', bindir)
+# Desktop Exec uses percent field codes even inside a quoted executable path.
+desktop_conf.set('BINDIR', bindir.replace('%', '%%'))
 
 configure_file(
   input: app_id + '.desktop.in',

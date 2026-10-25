@@ -33,7 +33,14 @@ jobs:
         run: |
           desktop-file-validate build/data/io.github.techmore.NmapUI.desktop
           appstreamcli validate --no-net build/data/io.github.techmore.NmapUI.metainfo.xml
-      - name: Summary helper unit tests
+      - name: Stage installed native artifacts without touching the host
+        run: |
+          DESTDIR="$PWD/native-stage" meson install -C build --no-rebuild
+          test -x native-stage/usr/local/bin/io.github.techmore.NmapUI
+          test -x native-stage/usr/local/bin/nmapui-summary
+          test -f native-stage/usr/local/share/io.github.techmore.NmapUI/nmapui.service.in
+          desktop-file-validate native-stage/usr/local/share/applications/io.github.techmore.NmapUI.desktop
+      - name: Helper and isolated installer tests
         run: python3 -m pytest -q tests
       - name: Render the indicator for every state
         run: dbus-run-session -- indicator/probe/run-probe.sh build/indicator probe-out
