@@ -14,5 +14,5 @@ rm -f "$prefix/bin/$id" "$prefix/share/applications/$id.desktop" \
   "$prefix/share/metainfo/$id.metainfo.xml" \
   "$prefix/share/icons/hicolor/scalable/apps/$id.svg" \
   "$prefix/share/icons/hicolor/symbolic/apps/$id-symbolic.svg" \
-  "$prefix/share/$id/nmapui.service.in" "$prefix/bin/nmapui-summary"
+  "$prefix/share/$id/nmapui.service.in" "$prefix/share/$id/engine-revision" "$prefix/bin/nmapui-summary"
 echo 'Removed the native app. Scanner data, profiles, releases and the system Wingpanel module are preserved.'

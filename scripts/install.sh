@@ -18,7 +18,8 @@ for arg in "$@"; do
   esac
 done
 
-if ((backend)) && [[ ! ${NMAPUI_REF:-} =~ ^[0-9a-fA-F]{40}$ ]]; then
+engine_ref=${NMAPUI_REF:-$(cat "$root/data/engine-revision")}
+if ((backend)) && [[ ! $engine_ref =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo 'Set NMAPUI_REF to a reviewed full engine commit SHA, or use --no-backend.' >&2; exit 2
 fi
 

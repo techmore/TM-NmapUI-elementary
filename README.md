@@ -33,7 +33,7 @@ On elementary OS 9 (Tanit), which ships GTK 4 Wingpanel (`wingpanel-9`) and WebK
 ```bash
 git clone https://github.com/techmore/TM-NmapUI-elementary.git
 cd TM-NmapUI-elementary
-NMAPUI_REF=<reviewed-full-engine-commit> scripts/install.sh
+scripts/install.sh
 ```
 
 That builds and installs the app into `~/.local`, installs the Wingpanel indicator
@@ -41,8 +41,12 @@ system-wide (sudo), pins **Network Scanner** to the dock, and runs `scripts/inst
 which clones a reviewed immutable TM-NmapUI revision into
 `~/.local/share/nmapui/releases/<commit>`, creates a private virtual environment,
 installs Chromium for PDF reports, and enables the loopback-only user service.
-This candidate requires an explicit full 40-character `NMAPUI_REF`; it never
-selects a moving branch or updates an existing development checkout.
+This candidate defaults to the reviewed engine commit
+`46a18a27bbc9df5fec061f6df226159b18f788e5` (`v2026.10.25`), recorded in
+`data/engine-revision` and also used by CI. `NMAPUI_REF` may override it with
+another full 40-character commit SHA; moving branch/tag names are rejected.
+The installer never updates an existing development checkout. This candidate
+source pin is not a claim of production or physical-desktop qualification.
 
 - `scripts/install.sh --no-indicator` skips the Wingpanel module; `--no-backend` skips the engine.
 - `NMAPUI_APP_DIR=~/Projects/TM-NmapUI NMAPUI_REF=<full-commit> scripts/install-backend.sh` clones committed source from an existing checkout without changing its branch, files or environment.
@@ -106,7 +110,7 @@ meson install -C build
 ## Verify
 
 ```bash
-python3 -m pytest -q tests                      # summary helper
+python3 -m pytest -q tests                      # helper + isolated installer transactions
 meson test -C build --print-errorlogs          # native navigation/OAuth policy
 indicator/probe/run-probe.sh build/indicator out # indicator renders for four states (Xvfb)
 scripts/snapshot.sh build out                    # window renders, light and dark (Xvfb)
@@ -118,7 +122,7 @@ CI requires both the app and Wingpanel 9 module in the
 `ghcr.io/elementary/docker:tanit-unstable` container. This is the current validation
 baseline; it is not a completed test on a stable physical elementary OS desktop.
 CI also starts the shared engine pinned to
-`632e40ddd17db262fda018c2e6c59aa6ff2d5025` on an isolated loopback port with temporary
+`46a18a27bbc9df5fec061f6df226159b18f788e5` on an isolated loopback port with temporary
 data and profile directories, network fingerprinting, startup traceroute, Vulners
 and automatic update checks disabled. It checks readiness and no active jobs,
 renders the online dashboard in light and dark modes, then sends the native

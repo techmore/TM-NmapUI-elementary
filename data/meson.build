@@ -29,4 +29,4 @@ install_data(
 )
 
 # systemd user unit template consumed by scripts/install-backend.sh.
-install_data('nmapui.service.in', install_dir: datadir / app_id)
+install_data('nmapui.service.in', 'engine-revision', install_dir: datadir / app_id)

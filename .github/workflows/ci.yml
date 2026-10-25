@@ -39,6 +39,7 @@ jobs:
           test -x native-stage/usr/local/bin/io.github.techmore.NmapUI
           test -x native-stage/usr/local/bin/nmapui-summary
           test -f native-stage/usr/local/share/io.github.techmore.NmapUI/nmapui.service.in
+          cmp data/engine-revision native-stage/usr/local/share/io.github.techmore.NmapUI/engine-revision
           desktop-file-validate native-stage/usr/local/share/applications/io.github.techmore.NmapUI.desktop
       - name: Helper and isolated installer tests
         run: python3 -m pytest -q tests
@@ -61,11 +62,21 @@ jobs:
           name: window-renders-${{ matrix.image }}
           path: window-out/*.png
           if-no-files-found: error
+      - name: Read the immutable candidate engine revision
+        id: engine-source
+        run: |
+          python3 - <<'PYTHON'
+          import os, pathlib, re
+          revision = pathlib.Path('data/engine-revision').read_text().strip()
+          assert re.fullmatch('[0-9a-f]{40}', revision), revision
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'revision={revision}\n')
+          PYTHON
       - name: Check out the shared engine at the reviewed source revision
         uses: actions/checkout@v5
         with:
           repository: techmore/TM-NmapUI
-          ref: 632e40ddd17db262fda018c2e6c59aa6ff2d5025
+          ref: ${{ steps.engine-source.outputs.revision }}
           path: engine
       - name: Install isolated engine runtime
         run: |

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stage an immutable shared-engine release, then atomically activate a managed user unit.
-# NMAPUI_REF must be a reviewed full commit SHA; NMAPUI_APP_DIR may provide a local source checkout.
+# NMAPUI_REF may override data/engine-revision with a reviewed full commit SHA; NMAPUI_APP_DIR may provide a local source checkout.
 # --rollback restores the previous managed unit. No source checkout or scanner data is removed.
 set -euo pipefail
 [[ $(id -u) != 0 ]] || { echo 'Run this installer as your desktop user, without sudo.' >&2; exit 1; }
@@ -39,7 +39,7 @@ if ((rollback)); then
   candidate=$(mktemp "$base/unit.XXXXXX")
   cp "$previous" "$candidate"
 else
-  ref=${NMAPUI_REF:-}
+  ref=${NMAPUI_REF:-$(cat "$here/../data/engine-revision")}
   if [[ ! $ref =~ ^[0-9a-fA-F]{40}$ ]]; then
     echo 'Set NMAPUI_REF to a reviewed full 40-character engine commit SHA.' >&2; exit 2
   fi
