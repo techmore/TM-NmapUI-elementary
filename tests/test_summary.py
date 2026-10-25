@@ -1,6 +1,11 @@
 import importlib.machinery
 import importlib.util
+import io
+import json
+import threading
 from pathlib import Path
+
+import pytest
 
 path = Path(__file__).resolve().parents[1] / "helper/nmapui-summary"
 loader = importlib.machinery.SourceFileLoader("nmapui_summary", str(path))
@@ -68,3 +73,84 @@ def test_devices_are_sorted_numerically_and_fill_host_count():
     out = summary.summarize(HEALTH, {"active_jobs": []}, {"history": []}, None, live)
     assert [d["ip"] for d in out["devices"]] == ["10.0.0.3", "10.0.0.20"]
     assert out["hosts"] == 2 and out["devices"][1]["open_ports"] == 1
+
+
+@pytest.mark.parametrize("runtime", [None, [], {}, {"active_jobs": None}, {"active_jobs": {}}])
+def test_unreadable_runtime_does_not_claim_idle(runtime, monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    out = summary.summarize(HEALTH, runtime, {"history": []}, None)
+    assert out["state"] == "unknown"
+    assert "unavailable" in out["label"].lower()
+    assert out["alerts"] and out["progress"] is None
+
+
+@pytest.mark.parametrize("flags,state", [({"paused": True}, "paused"), ({"pause_requested": True}, "pausing")])
+def test_paused_scan_state_is_preserved(flags, state, monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    runtime = {"active_jobs": [{"job_type": "scan", "status": "running", **flags, "details": {"progress": 130}}]}
+    out = summary.summarize(HEALTH, runtime, None, None)
+    assert out["state"] == state and out["progress"] == 100
+
+
+def test_timezone_aware_scan_start_does_not_break_summary(monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    runtime = {"active_jobs": [{"job_type": "scan", "status": "running",
+                                "started_at": "2026-01-01T01:00:00+03:00", "details": {}}]}
+    out = summary.summarize(HEALTH, runtime, None, None)
+    assert out["scan"]["elapsed_seconds"] >= 0
+
+
+def test_malformed_optional_rows_stay_unknown(monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    out = summary.summarize({"tool_versions": []}, {"active_jobs": [None, [], "bad"]},
+                            {"history": [None, {"diff_summary": "bad"}]}, None, {"hosts": {"ip": "bad"}})
+    assert out["state"] == "idle" and out["devices"] == [] and out["hosts"] is None
+
+
+def test_oversized_api_response_is_rejected(monkeypatch):
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    monkeypatch.setattr(summary, "MAX_RESPONSE_BYTES", 16)
+    monkeypatch.setattr(summary.urllib.request, "urlopen", lambda *_args, **_kwargs: Response(b" " * 17))
+    assert summary.get("/api/runtime/status") is None
+
+
+def test_wifi_status_does_not_trigger_rescan(monkeypatch):
+    calls = []
+    monkeypatch.setattr(summary, "run_json", lambda command: [{"dev": "wlan0", "gateway": "192.0.2.1"}] if "route" in command else [])
+
+    def run(command, **_kwargs):
+        calls.append(command)
+        return type("Result", (), {"stdout": "yes:Office WiFi\n"})()
+
+    monkeypatch.setattr(summary.subprocess, "run", run)
+    assert summary.network_info("wlan0")["ssid"] == "Office WiFi"
+    assert calls == [["nmcli", "-t", "-f", "active,ssid", "dev", "wifi", "list", "ifname", "wlan0", "--rescan", "no"]]
+
+
+def test_offline_main_avoids_followup_requests(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(summary, "get", lambda path: calls.append(path))
+    assert summary.main() == 0
+    assert calls == ["/api/health"]
+    assert json.loads(capsys.readouterr().out)["state"] == "offline"
+
+
+def test_main_reads_independent_api_summaries_concurrently(monkeypatch, capsys):
+    barrier = threading.Barrier(4)
+
+    def get(path):
+        if path == "/api/health":
+            return HEALTH
+        barrier.wait(timeout=2)
+        return {"active_jobs": []} if path == "/api/runtime/status" else {}
+
+    monkeypatch.setattr(summary, "get", get)
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    assert summary.main() == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "idle"

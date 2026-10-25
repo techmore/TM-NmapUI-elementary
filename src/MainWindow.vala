@@ -328,13 +328,16 @@ namespace NmapUI {
             }
             status_chip.add_css_class (backend.state.css ());
             status_spinner.visible = backend.state == ServiceState.SCANNING
-                || backend.state == ServiceState.STOPPING || backend.state == ServiceState.STARTING;
+                || backend.state == ServiceState.STOPPING || backend.state == ServiceState.STARTING
+                || backend.state == ServiceState.PAUSING;
             status_spinner.spinning = status_spinner.visible;
 
             string text = backend.state.label ();
             string tooltip = text;
             switch (backend.state) {
                 case ServiceState.SCANNING:
+                case ServiceState.PAUSING:
+                case ServiceState.PAUSED:
                 case ServiceState.STOPPING:
                     if (backend.progress >= 0) {
                         text = "%s · %d%%".printf (text, backend.progress);
@@ -351,6 +354,9 @@ namespace NmapUI {
                     break;
                 case ServiceState.OFFLINE:
                     tooltip = _("Click to start the scanner service");
+                    break;
+                case ServiceState.UNAVAILABLE:
+                    tooltip = backend.message;
                     break;
                 default:
                     break;
@@ -382,7 +388,9 @@ namespace NmapUI {
                 return;
             }
             unread_scan_results++;
-            var notification = new Notification (_("Scan finished"));
+            // An active job disappearing establishes that it ended, not whether
+            // it succeeded, failed or was cancelled. The report owns that result.
+            var notification = new Notification (_("Scan ended"));
             string body = target != "" ? _("Target %s").printf (target) : _("Network scan");
             if (hosts >= 0) {
                 body = ngettext ("%s · %d host", "%s · %d hosts", hosts).printf (body, hosts);
@@ -416,16 +424,42 @@ namespace NmapUI {
             return true;
         }
 
-        private Gtk.Widget on_create_popup (WebKit.NavigationAction action) {
-            // Google Drive sign-in opens a popup; give it a plain window of its own.
+        private Gtk.Widget? on_create_popup (WebKit.NavigationAction action) {
+            // The web UI creates about:blank synchronously before fetching the
+            // authorization URL. Keep that target until its Google navigation,
+            // then hand off to the system browser without rendering Google here.
+            var origin = ((Application) application).origin;
+            string uri = action.get_request ().get_uri ();
+            if (NavigationPolicy.google_auth_uri (uri, origin)) {
+                new Gtk.UriLauncher (uri).launch.begin (this, null);
+                return null;
+            }
+            if (uri != "" && uri != "about:blank" && !NavigationPolicy.local_uri (uri, origin)) {
+                return null;
+            }
             var view = (WebKit.WebView) Object.new (typeof (WebKit.WebView), "related-view", web);
             var popup = new Gtk.Window () {
-                title = _("Sign In"),
+                title = _("Network Scanner"),
                 transient_for = this,
                 default_width = 720,
                 default_height = 760,
                 child = view
             };
+            view.decide_policy.connect ((decision, type) => {
+                if (type != WebKit.PolicyDecisionType.NAVIGATION_ACTION) return false;
+                var navigation = (WebKit.NavigationPolicyDecision) decision;
+                string next_uri = navigation.get_navigation_action ().get_request ().get_uri ();
+                if (NavigationPolicy.google_auth_uri (next_uri, origin)) {
+                    decision.ignore ();
+                    new Gtk.UriLauncher (next_uri).launch.begin (this, null);
+                    popup.destroy ();
+                    return true;
+                }
+                if (next_uri == "about:blank" || NavigationPolicy.local_uri (next_uri, origin)) return false;
+                decision.ignore ();
+                popup.destroy ();
+                return true;
+            });
             view.close.connect (popup.destroy);
             view.ready_to_show.connect (popup.present);
             return view;
@@ -439,15 +473,18 @@ namespace NmapUI {
             var request = navigation.get_navigation_action ().get_request ();
             var uri = request.get_uri ();
             // Keep the scanner inside the window; anything else (GitHub, docs) goes to the user's browser.
-            if (uri.has_prefix (((Application) application).origin) || uri.has_prefix ("about:") || uri.has_prefix ("data:")) {
+            if (NavigationPolicy.local_uri (uri, ((Application) application).origin) || uri == "about:blank" || uri.has_prefix ("data:")) {
                 return false;
             }
-            if (navigation.get_navigation_action ().get_navigation_type () == WebKit.NavigationType.LINK_CLICKED) {
+            if (NavigationPolicy.google_auth_uri (uri, ((Application) application).origin)
+                || (navigation.get_navigation_action ().get_navigation_type () == WebKit.NavigationType.LINK_CLICKED
+                    && (uri.has_prefix ("https://") || uri.has_prefix ("http://")))) {
                 decision.ignore ();
                 new Gtk.UriLauncher (uri).launch.begin (this, null);
                 return true;
             }
-            return false;
+            decision.ignore ();
+            return true;
         }
 
         private void on_download_started (WebKit.Download download) {

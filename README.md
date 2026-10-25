@@ -91,6 +91,7 @@ meson install -C build
 
 ```bash
 python3 -m pytest -q tests                      # summary helper
+meson test -C build --print-errorlogs          # native navigation/OAuth policy
 indicator/probe/run-probe.sh build/indicator out # indicator renders for four states (Xvfb)
 scripts/snapshot.sh build out                    # window renders, light and dark (Xvfb)
 desktop-file-validate build/data/io.github.techmore.NmapUI.desktop
@@ -98,6 +99,20 @@ appstreamcli validate --no-net build/data/io.github.techmore.NmapUI.metainfo.xml
 ```
 
 CI runs the same steps in the `ghcr.io/elementary/docker:tanit-unstable` container.
+
+The helper keeps unavailable scanner activity distinct from idle, preserves
+paused/pausing state, bounds API response sizes and fetches independent summaries
+concurrently. Wi-Fi status reads use NetworkManager's cached access-point list
+without requesting a rescan. Failed summary reads clear outdated dropdown facts.
+
+Google Drive authorization opens in the system browser, including when the web
+UI first reserves an `about:blank` popup before receiving the authorization URL.
+Only the exact Google authorization endpoint with the engine's callback,
+`drive.file` scope and PKCE flow is handed off automatically. Other automatic
+cross-origin navigation is blocked; explicit ordinary web links open externally.
+This follows [Google's OAuth browser policy](https://developers.google.com/identity/protocols/oauth2/policies#use-secure-browsers).
+It does not establish Google project verification or real account-consent
+acceptance; those remain deployment checks.
 
 ## How it fits with the other repositories
 

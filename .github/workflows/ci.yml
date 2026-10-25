@@ -30,6 +30,7 @@ jobs:
         run: |
           meson setup build -Dindicator=$INDICATOR
           meson compile -C build
+          meson test -C build --print-errorlogs
       - name: Validate desktop entry and AppStream metadata
         run: |
           desktop-file-validate build/data/io.github.techmore.NmapUI.desktop

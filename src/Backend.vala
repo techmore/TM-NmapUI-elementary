@@ -3,16 +3,22 @@
 namespace NmapUI {
     public enum ServiceState {
         OFFLINE,
+        UNAVAILABLE,
         STARTING,
         IDLE,
         SCANNING,
+        PAUSING,
+        PAUSED,
         STOPPING;
 
         public string label () {
             switch (this) {
                 case STARTING: return _("Starting…");
+                case UNAVAILABLE: return _("Status unavailable");
                 case IDLE: return _("Ready");
                 case SCANNING: return _("Scanning");
+                case PAUSING: return _("Pausing scan…");
+                case PAUSED: return _("Scan paused");
                 case STOPPING: return _("Stopping scan");
                 default: return _("Not running");
             }
@@ -23,6 +29,8 @@ namespace NmapUI {
                 case STARTING: return "starting";
                 case IDLE: return "idle";
                 case SCANNING: return "scanning";
+                case PAUSING: return "starting";
+                case PAUSED: return "starting";
                 case STOPPING: return "scanning";
                 default: return "offline";
             }
@@ -96,7 +104,8 @@ namespace NmapUI {
             if (was_down && is_up) {
                 came_online ();
             }
-            bool was_scanning = previous == ServiceState.SCANNING || previous == ServiceState.STOPPING;
+            bool was_scanning = previous == ServiceState.SCANNING || previous == ServiceState.STOPPING
+                || previous == ServiceState.PAUSED || previous == ServiceState.PAUSING;
             if (was_scanning && state == ServiceState.IDLE) {
                 scan_finished (last_scan_hosts, last_scan_target);
             }
@@ -158,6 +167,17 @@ namespace NmapUI {
         }
 
         private void apply_runtime (Json.Object? runtime) {
+            // Health is public, runtime status may fail authentication or become
+            // unreadable. Neither case establishes that the scanner is idle.
+            if (runtime == null || !runtime.has_member ("active_jobs")
+                || runtime.get_member ("active_jobs").get_node_type () != Json.NodeType.ARRAY) {
+                state = ServiceState.UNAVAILABLE;
+                message = _("Cannot read scanner activity; open the scanner to check access and status.");
+                progress = -1;
+                hosts = -1;
+                target = "";
+                return;
+            }
             Json.Object? scan = null;
             if (runtime != null && runtime.has_member ("active_jobs")) {
                 var jobs = runtime.get_array_member ("active_jobs");
@@ -179,12 +199,18 @@ namespace NmapUI {
             }
             state = scan.get_string_member_with_default ("status", "") == "cancelling"
                 ? ServiceState.STOPPING : ServiceState.SCANNING;
+            if (state != ServiceState.STOPPING && scan.get_boolean_member_with_default ("paused", false)) {
+                state = ServiceState.PAUSED;
+            } else if (state != ServiceState.STOPPING && scan.get_boolean_member_with_default ("pause_requested", false)) {
+                state = ServiceState.PAUSING;
+            }
             var details = scan.has_member ("details") && !scan.get_null_member ("details")
                 ? scan.get_object_member ("details") : new Json.Object ();
             message = details.get_string_member_with_default ("message", "");
             target = details.get_string_member_with_default ("target", "");
             progress = details.has_member ("progress") && !details.get_null_member ("progress")
                 ? (int) details.get_int_member ("progress") : -1;
+            progress = int.min (100, int.max (-1, progress));
             hosts = details.has_member ("host_count") && !details.get_null_member ("host_count")
                 ? (int) details.get_int_member ("host_count") : -1;
             if (hosts < 0) {
