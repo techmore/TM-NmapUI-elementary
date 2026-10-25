@@ -98,7 +98,19 @@ desktop-file-validate build/data/io.github.techmore.NmapUI.desktop
 appstreamcli validate --no-net build/data/io.github.techmore.NmapUI.metainfo.xml
 ```
 
-CI runs the same steps in the `ghcr.io/elementary/docker:tanit-unstable` container.
+CI requires both the app and Wingpanel 9 module in the
+`ghcr.io/elementary/docker:tanit-unstable` container. This is the current validation
+baseline; it is not a completed test on a stable physical elementary OS desktop.
+CI also starts the shared engine pinned to
+`632e40ddd17db262fda018c2e6c59aa6ff2d5025` on an isolated loopback port with temporary
+data and profile directories, network fingerprinting, startup traceroute, Vulners
+and automatic update checks disabled. It checks readiness and no active jobs,
+renders the online dashboard in light and dark modes, then sends the native
+Ctrl+3 action and checks the rendered Reports page with OCR. It never starts a scan.
+Screenshots, OCR text, readiness evidence and the engine revision are CI artifacts.
+The Docker runner alone disables WebKit's sandbox for these isolated render jobs
+because it denies nested namespaces; installed application behavior keeps the
+WebKit sandbox enabled.
 
 The helper keeps unavailable scanner activity distinct from idle, preserves
 paused/pausing state, bounds API response sizes and fetches independent summaries
