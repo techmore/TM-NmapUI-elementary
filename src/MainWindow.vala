@@ -424,7 +424,9 @@ namespace NmapUI {
             return true;
         }
 
-        private Gtk.Widget? on_create_popup (WebKit.NavigationAction action) {
+        // WebKitGTK 6's Vala signal declares a non-null Gtk.Widget return,
+        // although WebKit permits NULL to decline popup creation.
+        private Gtk.Widget on_create_popup (WebKit.NavigationAction action) {
             // The web UI creates about:blank synchronously before fetching the
             // authorization URL. Keep that target until its Google navigation,
             // then hand off to the system browser without rendering Google here.
@@ -432,10 +434,10 @@ namespace NmapUI {
             string uri = action.get_request ().get_uri ();
             if (NavigationPolicy.google_auth_uri (uri, origin)) {
                 new Gtk.UriLauncher (uri).launch.begin (this, null);
-                return null;
+                return (Gtk.Widget) null;
             }
             if (uri != "" && uri != "about:blank" && !NavigationPolicy.local_uri (uri, origin)) {
-                return null;
+                return (Gtk.Widget) null;
             }
             var view = (WebKit.WebView) Object.new (typeof (WebKit.WebView), "related-view", web);
             var popup = new Gtk.Window () {

@@ -9,5 +9,6 @@ for scheme in light dark; do
   xvfb-run -a -s "-screen 0 1400x960x24" env GSK_RENDERER=cairo WEBKIT_DISABLE_DMABUF_RENDERER=1 \
     NMAPUI_SNAPSHOT="$out/window-$scheme.png" NMAPUI_SNAPSHOT_DELAY=${NMAPUI_SNAPSHOT_DELAY:-6000} \
     NMAPUI_FORCE_DARK=$prefer "$build/io.github.techmore.NmapUI" 2>&1 | grep -viE "egl|mesa|dri3" || true
+  test -s "$out/window-$scheme.png"
 done
 ls -la "$out"

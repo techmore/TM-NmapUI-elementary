@@ -9,5 +9,6 @@ for state in scanning attention idle offline; do
   chmod +x "$home/.local/bin/nmapui-summary"
   xvfb-run -a -s "-screen 0 800x900x24" env HOME="$home" NMAPUI_ICONS="$here/../icons" GSK_RENDERER=cairo \
     "$build/render-probe" "$out/$state.png" 1500 2>&1 | grep -v -i "dri3\|mesa\|egl" || true
+  test -s "$out/$state.png"
   rm -rf "$home"
 done

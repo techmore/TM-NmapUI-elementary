@@ -23,12 +23,10 @@ jobs:
           apt-get update
           apt-get install -y meson ninja-build valac pkg-config libgtk-4-dev libgranite-7-dev \
             libwebkitgtk-6.0-dev libsoup-3.0-dev libjson-glib-dev \
-            desktop-file-utils appstream xvfb python3 python3-pytest
-          # The Wingpanel indicator needs wingpanel-9 (elementary OS 9); build it when the image has it.
-          if apt-get install -y libwingpanel-9-dev; then echo "INDICATOR=true" >> "$GITHUB_ENV"; else echo "INDICATOR=false" >> "$GITHUB_ENV"; fi
+            desktop-file-utils appstream xvfb dbus-x11 python3 python3-pytest libwingpanel-9-dev
       - name: Build
         run: |
-          meson setup build -Dindicator=$INDICATOR
+          meson setup build -Dindicator=true
           meson compile -C build
           meson test -C build --print-errorlogs
       - name: Validate desktop entry and AppStream metadata
@@ -38,10 +36,18 @@ jobs:
       - name: Summary helper unit tests
         run: python3 -m pytest -q tests
       - name: Render the indicator for every state
-        if: env.INDICATOR == 'true'
-        run: indicator/probe/run-probe.sh build/indicator probe-out
+        run: dbus-run-session -- indicator/probe/run-probe.sh build/indicator probe-out
       - uses: actions/upload-artifact@v4
-        if: env.INDICATOR == 'true'
         with:
           name: indicator-renders-${{ matrix.image }}
           path: probe-out/*.png
+          if-no-files-found: error
+      - name: Render the native window offline in both color schemes
+        env:
+          NMAPUI_URL: http://127.0.0.1:19000
+        run: dbus-run-session -- scripts/snapshot.sh build window-out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: window-renders-${{ matrix.image }}
+          path: window-out/*.png
+          if-no-files-found: error
