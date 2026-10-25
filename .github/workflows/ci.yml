@@ -23,24 +23,73 @@ jobs:
           apt-get update
           apt-get install -y meson ninja-build valac pkg-config libgtk-4-dev libgranite-7-dev \
             libwebkitgtk-6.0-dev libsoup-3.0-dev libjson-glib-dev \
-            desktop-file-utils appstream xvfb python3 python3-pytest
-          # The Wingpanel indicator needs wingpanel-9 (elementary OS 9); build it when the image has it.
-          if apt-get install -y libwingpanel-9-dev; then echo "INDICATOR=true" >> "$GITHUB_ENV"; else echo "INDICATOR=false" >> "$GITHUB_ENV"; fi
+            desktop-file-utils appstream xvfb dbus-x11 python3 python3-pytest python3-venv python3-dev build-essential libwingpanel-9-dev xdotool tesseract-ocr nmap
       - name: Build
         run: |
-          meson setup build -Dindicator=$INDICATOR
+          meson setup build -Dindicator=true
           meson compile -C build
+          meson test -C build --print-errorlogs
       - name: Validate desktop entry and AppStream metadata
         run: |
           desktop-file-validate build/data/io.github.techmore.NmapUI.desktop
           appstreamcli validate --no-net build/data/io.github.techmore.NmapUI.metainfo.xml
-      - name: Summary helper unit tests
+      - name: Stage installed native artifacts without touching the host
+        run: |
+          DESTDIR="$PWD/native-stage" meson install -C build --no-rebuild
+          test -x native-stage/usr/local/bin/io.github.techmore.NmapUI
+          test -x native-stage/usr/local/bin/nmapui-summary
+          test -f native-stage/usr/local/share/io.github.techmore.NmapUI/nmapui.service.in
+          cmp data/engine-revision native-stage/usr/local/share/io.github.techmore.NmapUI/engine-revision
+          desktop-file-validate native-stage/usr/local/share/applications/io.github.techmore.NmapUI.desktop
+      - name: Helper and isolated installer tests
         run: python3 -m pytest -q tests
       - name: Render the indicator for every state
-        if: env.INDICATOR == 'true'
-        run: indicator/probe/run-probe.sh build/indicator probe-out
+        run: dbus-run-session -- indicator/probe/run-probe.sh build/indicator probe-out
       - uses: actions/upload-artifact@v4
-        if: env.INDICATOR == 'true'
         with:
           name: indicator-renders-${{ matrix.image }}
           path: probe-out/*.png
+          if-no-files-found: error
+      - name: Render the native window offline in both color schemes
+        env:
+          NMAPUI_URL: http://127.0.0.1:19000
+          # GitHub's Docker runner disallows the nested namespaces WebKit needs.
+          # Only this isolated offline render disables the WebKit sandbox.
+          WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
+        run: scripts/snapshot.sh build window-out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: window-renders-${{ matrix.image }}
+          path: window-out/*.png
+          if-no-files-found: error
+      - name: Read the immutable candidate engine revision
+        id: engine-source
+        run: |
+          python3 - <<'PYTHON'
+          import os, pathlib, re
+          revision = pathlib.Path('data/engine-revision').read_text().strip()
+          assert re.fullmatch('[0-9a-f]{40}', revision), revision
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'revision={revision}\n')
+          PYTHON
+      - name: Check out the shared engine at the reviewed source revision
+        uses: actions/checkout@v5
+        with:
+          repository: techmore/TM-NmapUI
+          ref: ${{ steps.engine-source.outputs.revision }}
+          path: engine
+      - name: Install isolated engine runtime
+        run: |
+          python3 -m venv .engine-venv
+          .engine-venv/bin/pip install -r engine/requirements.txt
+      - name: Render online native dashboard and exercise the Reports action
+        env:
+          # Nested WebKit namespaces are unavailable in this Docker runner only.
+          WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
+        run: scripts/online-snapshot.sh build online-out engine .engine-venv/bin/python
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: online-renders-${{ matrix.image }}
+          path: online-out/
+          if-no-files-found: error

@@ -1,6 +1,12 @@
 import importlib.machinery
 import importlib.util
+import io
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+import pytest
 
 path = Path(__file__).resolve().parents[1] / "helper/nmapui-summary"
 loader = importlib.machinery.SourceFileLoader("nmapui_summary", str(path))
@@ -62,9 +68,153 @@ def test_network_info_without_interface_is_all_unknown(monkeypatch):
     assert summary.network_info(None)["address"] is None
 
 
+def test_malformed_device_addresses_do_not_crash_sorting_and_ipv6_is_supported(monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    live = {"hosts": [{"ip": "9" * 5000}, {"ip": "not-an-address"},
+                      {"ip": "::2"}, {"ip": "127.0.0.1"}, {"ip": "::1"}]}
+    out = summary.summarize(HEALTH, {"active_jobs": []}, None, None, live)
+    assert [row["ip"] for row in out["devices"]] == ["127.0.0.1", "::1", "::2"]
+
+
 def test_devices_are_sorted_numerically_and_fill_host_count():
     live = {"hosts": [{"ip": "10.0.0.20", "hostname": "b", "vendor": "V", "open_ports": 1},
                       {"ip": "10.0.0.3", "hostname": "", "vendor": "W", "open_ports": None}, {"hostname": "no-ip"}]}
     out = summary.summarize(HEALTH, {"active_jobs": []}, {"history": []}, None, live)
     assert [d["ip"] for d in out["devices"]] == ["10.0.0.3", "10.0.0.20"]
     assert out["hosts"] == 2 and out["devices"][1]["open_ports"] == 1
+
+
+@pytest.mark.parametrize("runtime", [None, [], {}, {"active_jobs": None}, {"active_jobs": {}}])
+def test_unreadable_runtime_does_not_claim_idle(runtime, monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    out = summary.summarize(HEALTH, runtime, {"history": []}, None)
+    assert out["state"] == "unknown"
+    assert "unavailable" in out["label"].lower()
+    assert out["alerts"] and out["progress"] is None
+
+
+@pytest.mark.parametrize("flags,state", [({"paused": True}, "paused"), ({"pause_requested": True}, "pausing")])
+def test_paused_scan_state_is_preserved(flags, state, monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    runtime = {"active_jobs": [{"job_type": "scan", "status": "running", **flags, "details": {"progress": 130}}]}
+    out = summary.summarize(HEALTH, runtime, None, None)
+    assert out["state"] == state and out["progress"] == 100
+
+
+def test_timezone_aware_scan_start_does_not_break_summary(monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    runtime = {"active_jobs": [{"job_type": "scan", "status": "running",
+                                "started_at": "2026-01-01T01:00:00+03:00", "details": {}}]}
+    out = summary.summarize(HEALTH, runtime, None, None)
+    assert out["scan"]["elapsed_seconds"] >= 0
+
+
+def test_malformed_optional_rows_stay_unknown(monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    out = summary.summarize({"tool_versions": []}, {"active_jobs": [None, [], "bad"]},
+                            {"history": [None, {"diff_summary": "bad"}]}, None, {"hosts": {"ip": "bad"}})
+    assert out["state"] == "unknown" and out["devices"] == [] and out["hosts"] is None
+
+
+@pytest.mark.parametrize("job", [None, [], 7, {},
+    {"job_type": "scan", "status": "completed"},
+    {"job_type": "scan", "status": "running", "paused": "false"},
+    {"job_type": "scan", "status": "running", "details": []},
+    {"job_type": "scan", "status": "running", "details": {"message": {}}},
+    {"job_type": "scan", "status": "running", "details": {"progress": True}},
+    {"job_type": "scan", "status": "running", "details": {"host_count": 2**63}},
+])
+def test_invalid_active_job_cannot_establish_idle_or_scan_state(job, monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    out = summary.summarize(HEALTH, {"active_jobs": [job]}, None, None)
+    assert out["state"] == "unknown" and out["scan"] is None
+    assert out["alerts"] and out["progress"] is None
+
+
+def test_optional_api_text_cannot_emit_objects_into_indicator_schema(monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    out = summary.summarize({"app_version": {}}, {"active_jobs": []},
+        {"history": [{"timestamp": [], "customer_name": {}, "critical_cves": 2**70}]},
+        {"enabled": True, "next_run": {}}, {"hosts": [{"ip": {}}, {"ip": "127.0.0.1", "hostname": []}]})
+    assert out["version"] is out["last_scan"] is out["last_customer"] is out["critical"] is None
+    assert out["monitor"] == "Enabled" and out["devices"] == [{"ip": "127.0.0.1", "name": "", "vendor": "", "open_ports": None}]
+
+
+def test_oversized_api_response_is_rejected(monkeypatch):
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    monkeypatch.setattr(summary, "MAX_RESPONSE_BYTES", 16)
+    monkeypatch.setattr(summary.urllib.request, "urlopen", lambda *_args, **_kwargs: Response(b" " * 17))
+    assert summary.get("/api/runtime/status") is None
+
+
+def test_wifi_status_does_not_trigger_rescan(monkeypatch):
+    calls = []
+    monkeypatch.setattr(summary, "run_json", lambda command: [{"dev": "wlan0", "gateway": "192.0.2.1"}] if "route" in command else [])
+
+    def run(command, **_kwargs):
+        calls.append(command)
+        return type("Result", (), {"stdout": "yes:Office WiFi\n"})()
+
+    monkeypatch.setattr(summary.subprocess, "run", run)
+    assert summary.network_info("wlan0")["ssid"] == "Office WiFi"
+    assert calls == [["nmcli", "-t", "-f", "active,ssid", "dev", "wifi", "list", "ifname", "wlan0", "--rescan", "no"]]
+
+
+def test_offline_main_avoids_followup_requests(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(summary, "get", lambda path: calls.append(path))
+    assert summary.main() == 0
+    assert calls == ["/api/health"]
+    assert json.loads(capsys.readouterr().out)["state"] == "offline"
+
+
+def test_main_reads_independent_api_summaries_concurrently(monkeypatch, capsys):
+    barrier = threading.Barrier(4)
+
+    def get(path):
+        if path == "/api/health":
+            return HEALTH
+        barrier.wait(timeout=2)
+        return {"active_jobs": []} if path == "/api/runtime/status" else {}
+
+    monkeypatch.setattr(summary, "get", get)
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    assert summary.main() == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "idle"
+
+
+def test_strict_http_status_denial_stays_unknown_without_dashboard_credentials(monkeypatch, capsys):
+    observed = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            observed.append((self.headers.get("Cookie"), self.headers.get("Authorization")))
+            body = json.dumps(HEALTH if self.path == "/api/health" else {"error": "Unauthorized"}).encode()
+            self.send_response(200 if self.path == "/api/health" else 401)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setattr(summary, "BASE", f"http://127.0.0.1:{server.server_port}")
+        monkeypatch.setattr(summary, "network_info", lambda iface: {})
+        assert summary.main() == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["state"] == "unknown" and out["progress"] is None
+        assert len(observed) == 5 and all(pair == (None, None) for pair in observed)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

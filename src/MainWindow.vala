@@ -42,7 +42,7 @@ namespace NmapUI {
         private Granite.Toast toast;
         private string? last_download_path = null;
         private bool syncing_tabs = false;
-        private bool ever_loaded = false;
+        private PagePresentation page = new PagePresentation ();
         private int unread_scan_results = 0;
 
         public MainWindow (Application app) {
@@ -72,7 +72,7 @@ namespace NmapUI {
             });
 
             on_backend_changed ();
-            web.load_uri (((Application) application).origin + "/");
+            load_scanner_page ();
         }
 
         // --- Construction -------------------------------------------------------------------
@@ -225,6 +225,15 @@ namespace NmapUI {
                 new Gtk.UriLauncher ("https://github.com/techmore/TM-NmapUI-elementary#install").launch.begin (this, null);
             });
             stack.add_named (offline_page, "offline");
+            var page_error = new Granite.Placeholder (_("The scanner page could not load")) {
+                description = _("The scanner service is reachable. Reload the page to try again."),
+                icon = new ThemedIcon ("dialog-warning"),
+                halign = Gtk.Align.CENTER,
+                valign = Gtk.Align.CENTER
+            };
+            page_error.append_button (new ThemedIcon ("view-refresh"), _("Reload Scanner Page"),
+                _("Try loading the scanner again")).clicked.connect (load_scanner_page);
+            stack.add_named (page_error, "page-error");
 
             var starting_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 12) {
                 halign = Gtk.Align.CENTER,
@@ -254,8 +263,8 @@ namespace NmapUI {
 
         private void install_actions () {
             add_simple_action ("reload", () => {
-                if (stack.visible_child_name == "web") {
-                    web.reload ();
+                if (backend.state != ServiceState.OFFLINE && backend.state != ServiceState.STARTING) {
+                    load_scanner_page ();
                 } else {
                     backend.poll.begin ();
                 }
@@ -300,9 +309,11 @@ namespace NmapUI {
         // --- Tabs -------------------------------------------------------------------------
 
         private void show_tab (string name) {
-            if (stack == null || stack.visible_child_name != "web") {
+            page.request_tab (name);
+            if (stack == null || stack.visible_child_name != "web" || !page.can_navigate ()) {
                 return;
             }
+            page.take_tab ();
             var script = "if (window.location.hash !== '#%s') { window.location.hash = '#%s'; }".printf (name, name);
             web.evaluate_javascript.begin (script, -1, null, null, null);
         }
@@ -328,13 +339,16 @@ namespace NmapUI {
             }
             status_chip.add_css_class (backend.state.css ());
             status_spinner.visible = backend.state == ServiceState.SCANNING
-                || backend.state == ServiceState.STOPPING || backend.state == ServiceState.STARTING;
+                || backend.state == ServiceState.STOPPING || backend.state == ServiceState.STARTING
+                || backend.state == ServiceState.PAUSING;
             status_spinner.spinning = status_spinner.visible;
 
             string text = backend.state.label ();
             string tooltip = text;
             switch (backend.state) {
                 case ServiceState.SCANNING:
+                case ServiceState.PAUSING:
+                case ServiceState.PAUSED:
                 case ServiceState.STOPPING:
                     if (backend.progress >= 0) {
                         text = "%s · %d%%".printf (text, backend.progress);
@@ -352,6 +366,9 @@ namespace NmapUI {
                 case ServiceState.OFFLINE:
                     tooltip = _("Click to start the scanner service");
                     break;
+                case ServiceState.UNAVAILABLE:
+                    tooltip = backend.message;
+                    break;
                 default:
                     break;
             }
@@ -359,22 +376,28 @@ namespace NmapUI {
             status_chip.tooltip_text = tooltip;
 
             if (backend.state == ServiceState.STARTING) {
-                stack.visible_child_name = "starting";
+                starting_label.label = _("Starting the scanner service…");
             } else if (backend.state == ServiceState.OFFLINE) {
                 offline_start_button.sensitive = backend.unit_installed ();
                 offline_start_button.tooltip_text = offline_start_button.sensitive ? ""
                     : _("No %s user unit is installed; run scripts/install-backend.sh first").printf (backend.unit);
-                stack.visible_child_name = "offline";
-            } else if (stack.visible_child_name != "web" && ever_loaded) {
-                stack.visible_child_name = "web";
+            } else {
+                starting_label.label = _("Loading the scanner page…");
             }
+            stack.visible_child_name = page.visible_page (backend.state == ServiceState.OFFLINE,
+                                                          backend.state == ServiceState.STARTING);
             reload_button.sensitive = backend.state != ServiceState.STARTING;
         }
 
+        private void load_scanner_page () {
+            // Reserve the in-flight state before WebKit can emit callbacks or
+            // the first health poll can try to load the same page again.
+            page.started ();
+            web.load_uri (((Application) application).origin + "/");
+        }
+
         private void on_backend_online () {
-            if (!ever_loaded || stack.visible_child_name != "web") {
-                web.load_uri (((Application) application).origin + "/");
-            }
+            if (page.needs_online_load ()) load_scanner_page ();
         }
 
         private void on_scan_finished (int hosts, string target) {
@@ -382,7 +405,9 @@ namespace NmapUI {
                 return;
             }
             unread_scan_results++;
-            var notification = new Notification (_("Scan finished"));
+            // An active job disappearing establishes that it ended, not whether
+            // it succeeded, failed or was cancelled. The report owns that result.
+            var notification = new Notification (_("Scan ended"));
             string body = target != "" ? _("Target %s").printf (target) : _("Network scan");
             if (hosts >= 0) {
                 body = ngettext ("%s · %d host", "%s · %d hosts", hosts).printf (body, hosts);
@@ -396,36 +421,64 @@ namespace NmapUI {
         // --- WebKit -----------------------------------------------------------------------------
 
         private void on_load_changed (WebKit.LoadEvent event) {
-            if (event == WebKit.LoadEvent.FINISHED) {
-                ever_loaded = true;
-                if (backend.state != ServiceState.OFFLINE && backend.state != ServiceState.STARTING) {
-                    stack.visible_child_name = "web";
-                }
-                sync_tabs_from_uri ();
+            if (event == WebKit.LoadEvent.STARTED) page.started ();
+            if (event == WebKit.LoadEvent.FINISHED && page.finished ()) {
+                on_backend_changed ();
+                var pending = page.pending_tab;
+                if (pending != null) show_tab (pending);
+                else sync_tabs_from_uri ();
             }
         }
 
         private bool on_load_failed (WebKit.LoadEvent event, string uri, Error error) {
-            if (error.matches (WebKit.NetworkError.quark (), WebKit.NetworkError.CANCELLED)) {
-                return false;
-            }
+            if (error.matches (WebKit.NetworkError.quark (), WebKit.NetworkError.CANCELLED)) return true;
+            // A healthy service and a failed WebKit page are different states.
+            // Do not log URLs, which may contain authentication callback data.
+            warning ("Scanner page failed to load (domain %u, code %d)", (uint) error.domain, error.code);
+            page.load_failed ();
+            on_backend_changed ();
             backend.poll.begin ();
-            if (backend.state == ServiceState.OFFLINE || !ever_loaded) {
-                stack.visible_child_name = backend.state == ServiceState.STARTING ? "starting" : "offline";
-            }
             return true;
         }
 
+        // WebKitGTK 6's Vala signal declares a non-null Gtk.Widget return,
+        // although WebKit permits NULL to decline popup creation.
         private Gtk.Widget on_create_popup (WebKit.NavigationAction action) {
-            // Google Drive sign-in opens a popup; give it a plain window of its own.
+            // The web UI creates about:blank synchronously before fetching the
+            // authorization URL. Keep that target until its Google navigation,
+            // then hand off to the system browser without rendering Google here.
+            var origin = ((Application) application).origin;
+            string uri = action.get_request ().get_uri ();
+            if (NavigationPolicy.google_auth_uri (uri, origin)) {
+                new Gtk.UriLauncher (uri).launch.begin (this, null);
+                return (Gtk.Widget) null;
+            }
+            if (uri != "" && uri != "about:blank" && !NavigationPolicy.local_uri (uri, origin)) {
+                return (Gtk.Widget) null;
+            }
             var view = (WebKit.WebView) Object.new (typeof (WebKit.WebView), "related-view", web);
             var popup = new Gtk.Window () {
-                title = _("Sign In"),
+                title = _("Network Scanner"),
                 transient_for = this,
                 default_width = 720,
                 default_height = 760,
                 child = view
             };
+            view.decide_policy.connect ((decision, type) => {
+                if (type != WebKit.PolicyDecisionType.NAVIGATION_ACTION) return false;
+                var navigation = (WebKit.NavigationPolicyDecision) decision;
+                string next_uri = navigation.get_navigation_action ().get_request ().get_uri ();
+                if (NavigationPolicy.google_auth_uri (next_uri, origin)) {
+                    decision.ignore ();
+                    new Gtk.UriLauncher (next_uri).launch.begin (this, null);
+                    popup.destroy ();
+                    return true;
+                }
+                if (next_uri == "about:blank" || NavigationPolicy.local_uri (next_uri, origin)) return false;
+                decision.ignore ();
+                popup.destroy ();
+                return true;
+            });
             view.close.connect (popup.destroy);
             view.ready_to_show.connect (popup.present);
             return view;
@@ -439,15 +492,18 @@ namespace NmapUI {
             var request = navigation.get_navigation_action ().get_request ();
             var uri = request.get_uri ();
             // Keep the scanner inside the window; anything else (GitHub, docs) goes to the user's browser.
-            if (uri.has_prefix (((Application) application).origin) || uri.has_prefix ("about:") || uri.has_prefix ("data:")) {
+            if (NavigationPolicy.local_uri (uri, ((Application) application).origin) || uri == "about:blank" || uri.has_prefix ("data:")) {
                 return false;
             }
-            if (navigation.get_navigation_action ().get_navigation_type () == WebKit.NavigationType.LINK_CLICKED) {
+            if (NavigationPolicy.google_auth_uri (uri, ((Application) application).origin)
+                || (navigation.get_navigation_action ().get_navigation_type () == WebKit.NavigationType.LINK_CLICKED
+                    && (uri.has_prefix ("https://") || uri.has_prefix ("http://")))) {
                 decision.ignore ();
                 new Gtk.UriLauncher (uri).launch.begin (this, null);
                 return true;
             }
-            return false;
+            decision.ignore ();
+            return true;
         }
 
         private void on_download_started (WebKit.Download download) {

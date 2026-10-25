@@ -1,86 +1,123 @@
 #!/usr/bin/env bash
-# Install (or update) the TM-NmapUI scanner engine for the current user and run it as a
-# loopback-only systemd user service. Network Scanner (this repo) is only the front end.
-#
-#   scripts/install-backend.sh                 # clone/update into ~/.local/share/nmapui/app
-#   NMAPUI_APP_DIR=~/Projects/TM-NmapUI scripts/install-backend.sh   # use an existing checkout
-#   NMAPUI_REF=main scripts/install-backend.sh # pin a branch, tag or commit (default: main)
-#
-# Unprivileged scans use connect mode. For SYN/OS/ARP scans use the root service from
-# TM-NmapUI's packaging/ubuntu/install-service.sh instead; this script never grants
-# raw-socket capabilities.
+# Stage an immutable shared-engine release, then atomically activate a managed user unit.
+# NMAPUI_REF may override data/engine-revision with a reviewed full commit SHA; NMAPUI_APP_DIR may provide a local source checkout.
+# --rollback restores the previous managed unit. No source checkout or scanner data is removed.
 set -euo pipefail
+[[ $(id -u) != 0 ]] || { echo 'Run this installer as your desktop user, without sudo.' >&2; exit 1; }
+umask 077
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-repo_url=${NMAPUI_REPO:-https://github.com/techmore/TM-NmapUI.git}
-ref=${NMAPUI_REF:-main}
-app=${NMAPUI_APP_DIR:-$HOME/.local/share/nmapui/app}
-unit_name=nmapui.service
-
-# Where the service template lives: installed by meson, or the source tree when run from a checkout.
-template=""
-for candidate in "$here/../data/nmapui.service.in" \
-                 "${XDG_DATA_HOME:-$HOME/.local/share}/io.github.techmore.NmapUI/nmapui.service.in" \
-                 "/usr/share/io.github.techmore.NmapUI/nmapui.service.in" \
-                 "/usr/local/share/io.github.techmore.NmapUI/nmapui.service.in"; do
-  [[ -f "$candidate" ]] && { template=$candidate; break; }
-done
-[[ -n "$template" ]] || { echo "nmapui.service.in not found; build and install this project first." >&2; exit 1; }
-
-echo "== 1/5 System packages"
-packages=(nmap arp-scan xsltproc traceroute python3 python3-venv python3-dev build-essential git curl)
-missing=()
-for pkg in "${packages[@]}"; do dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg"); done
-if ((${#missing[@]})); then
-  echo "Installing: ${missing[*]}"
-  sudo apt-get update -qq
-  sudo apt-get install -y "${missing[@]}"
+base="$HOME/.local/share/nmapui"
+unit="$HOME/.config/systemd/user/nmapui.service"
+previous="$base/previous.service"
+marker='# Managed by TM-NmapUI-elementary installer'
+staging=''; candidate=''
+trap '[[ -z "$staging" ]] || rm -rf "$staging"; [[ -z "$candidate" ]] || rm -f "$candidate"' EXIT
+mkdir -p "$base" "$(dirname "$unit")"
+# Refuse custom user units and system/root scanners before fetching or changing anything.
+if [[ -e "$unit" ]] && ! grep -Fxq "$marker" "$unit"; then
+  echo "Refusing to replace an unmanaged user unit: $unit" >&2; exit 1
 fi
-
-echo "== 2/5 Scanner engine source ($ref)"
-if [[ -d "$app/.git" ]]; then
-  git -C "$app" fetch -q --tags origin
-  git -C "$app" checkout -q --detach "origin/$ref" 2>/dev/null || git -C "$app" checkout -q --detach "$ref"
+if systemctl is-active --quiet nmapui.service; then
+  echo 'A system scanner service is active; keep that service and install with --no-backend.' >&2; exit 1
+fi
+enabled=0
+systemctl --user is-enabled --quiet nmapui.service && enabled=1
+active=0
+systemctl --user is-active --quiet nmapui.service && active=1
+if (( ! active )) && curl -sS --max-time 2 -o /dev/null http://127.0.0.1:9000/api/health/live 2>/dev/null; then
+  echo 'Port 9000 already serves another process; refusing to replace it.' >&2; exit 1
+fi
+rollback=0
+case ${1:-} in
+  '') ;;
+  --rollback) rollback=1 ;;
+  *) echo 'Usage: install-backend.sh [--rollback]' >&2; exit 2 ;;
+esac
+[[ $# -le 1 ]] || exit 2
+if ((rollback)); then
+  [[ -f "$previous" ]] && grep -Fxq "$marker" "$previous" || { echo 'No previous managed release.' >&2; exit 1; }
+  candidate=$(mktemp "$base/unit.XXXXXX")
+  cp "$previous" "$candidate"
 else
-  mkdir -p "$(dirname "$app")"
-  git clone -q "$repo_url" "$app"
-  git -C "$app" checkout -q --detach "origin/$ref" 2>/dev/null || git -C "$app" checkout -q --detach "$ref"
-fi
-echo "engine at $(git -C "$app" rev-parse --short HEAD) in $app"
-
-echo "== 3/5 Python environment"
-if ! "$app/.venv/bin/python" -c "import flask, flask_socketio, gunicorn, playwright" 2>/dev/null; then
-  rm -rf "$app/.venv"
-  python3 -m venv "$app/.venv"
-  "$app/.venv/bin/pip" install -q --upgrade pip
-fi
-"$app/.venv/bin/pip" install -q -r "$app/requirements.txt"
-echo "venv ok: $("$app/.venv/bin/python" --version)"
-
-echo "== 4/5 Chromium for PDF reports"
-"$app/.venv/bin/python" -m playwright install chromium
-sudo "$app/.venv/bin/python" -m playwright install-deps chromium >/dev/null 2>&1 \
-  || echo "note: could not install Chromium system libraries; PDF export may fail"
-
-echo "== 5/5 User service ($unit_name)"
-unit="$HOME/.config/systemd/user/$unit_name"
-mkdir -p "$(dirname "$unit")" "$HOME/.local/share/nmapui/logs"
-sed "s|@APP_DIR@|$app|g" "$template" > "$unit"
-# Retire earlier development units that bound the same port.
-for old in nmapui-dev.service nmapui-local.service; do
-  if systemctl --user cat "$old" >/dev/null 2>&1; then
-    systemctl --user disable --now "$old" 2>/dev/null || true
-    rm -f "$HOME/.config/systemd/user/$old"
+  ref=${NMAPUI_REF:-$(cat "$here/../data/engine-revision")}
+  if [[ ! $ref =~ ^[0-9a-fA-F]{40}$ ]]; then
+    echo 'Set NMAPUI_REF to a reviewed full 40-character engine commit SHA.' >&2; exit 2
   fi
+  ref=$(printf '%s' "$ref" | tr 'A-F' 'a-f')
+  echo "== System packages"
+  packages=(nmap arp-scan xsltproc traceroute python3 python3-venv python3-dev build-essential git curl)
+  missing=()
+  for pkg in "${packages[@]}"; do dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg"); done
+  if ((${#missing[@]})); then
+    sudo apt-get update -qq
+    sudo apt-get install -y "${missing[@]}"
+  fi
+  release="$base/releases/$ref"
+  mkdir -p "$base/releases"
+  if [[ ! -f "$release/.nmapui-release.json" ]]; then
+    [[ ! -e "$release" ]] || { echo "Unmanaged release directory: $release" >&2; exit 1; }
+    staging=$(mktemp -d "$base/releases/.stage.XXXXXX")
+    source=${NMAPUI_APP_DIR:-${NMAPUI_REPO:-https://github.com/techmore/TM-NmapUI.git}}
+    git clone -q --no-hardlinks --no-checkout "$source" "$staging/app"
+    git -C "$staging/app" checkout -q --detach "$ref"
+    [[ $(git -C "$staging/app" rev-parse HEAD) == "$ref" ]]
+    python3 -m venv "$staging/app/.venv"
+    "$staging/app/.venv/bin/python" -m pip install -q -r "$staging/app/requirements.txt"
+    "$staging/app/.venv/bin/python" -m playwright install chromium
+    # Missing PDF libraries are an installation failure, never a success with broken exports.
+    sudo "$staging/app/.venv/bin/python" -m playwright install-deps chromium
+    python3 - "$staging/app/.nmapui-release.json" "$ref" "$source" <<'PY'
+import json, sys
+with open(sys.argv[1], 'w') as output:
+    json.dump({'engine_commit': sys.argv[2], 'source': sys.argv[3]}, output, indent=2)
+PY
+    mv "$staging/app" "$release"
+    rmdir "$staging"; staging=''
+  fi
+  [[ $(git -C "$release" rev-parse HEAD) == "$ref" ]] || exit 1
+  git -C "$release" diff --quiet
+  git -C "$release" diff --cached --quiet
+  template="$here/../data/nmapui.service.in"
+  [[ -f "$template" ]] || { echo "Missing service template: $template" >&2; exit 1; }
+  candidate=$(mktemp "$base/unit.XXXXXX")
+  python3 - "$template" "$release" "$candidate" <<'PY'
+import pathlib, sys
+path = sys.argv[2]
+if any(ord(char) < 32 for char in path):
+    raise SystemExit('Control characters are not supported in installation paths')
+escaped = path.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%')
+pathlib.Path(sys.argv[3]).write_text(pathlib.Path(sys.argv[1]).read_text().replace('@APP_DIR@', escaped))
+PY
+fi
+backup=$(mktemp "$base/unit-backup.XXXXXX")
+had_unit=0
+if [[ -f "$unit" ]]; then cp "$unit" "$backup"; had_unit=1; fi
+# Same filesystem: readers never see a partially written unit.
+install -m 600 "$candidate" "$unit.new"
+mv "$unit.new" "$unit"
+rm -f "$candidate"
+activated=0
+if systemctl --user daemon-reload && systemctl --user enable nmapui.service && systemctl --user restart nmapui.service; then
+  activated=1
+fi
+ready=0
+for attempt in {1..30}; do
+  ((activated)) || break
+  if systemctl --user is-active --quiet nmapui.service && curl -fsS --max-time 2 http://127.0.0.1:9000/api/health/ready 2>/dev/null \
+      | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("ready") is True else 1)' 2>/dev/null; then
+    ready=1; break
+  fi
+  sleep 1
 done
-systemctl --user daemon-reload
-systemctl --user enable --now "$unit_name"
-systemctl --user restart "$unit_name"
-for _ in $(seq 1 30); do
-  curl -fsS http://127.0.0.1:9000/api/health/live >/dev/null 2>&1 && break; sleep 1
-done
-if curl -fsS http://127.0.0.1:9000/api/health/live >/dev/null; then
-  echo "scanner engine is up on 127.0.0.1:9000"
+if ((ready)); then
+  if ((had_unit)); then mv "$backup" "$previous"; else rm -f "$backup"; fi
+  echo 'Scanner release ready on 127.0.0.1:9000; data and previous release preserved.'
 else
-  echo "scanner engine did not answer; see: journalctl --user -u $unit_name -e" >&2
+  echo 'Candidate failed readiness; restoring the previous service configuration.' >&2
+  systemctl --user stop nmapui.service || true
+  if ((had_unit)); then mv "$backup" "$unit"; else rm -f "$unit" "$backup"; fi
+  systemctl --user daemon-reload
+  if ((enabled)); then systemctl --user enable nmapui.service; else systemctl --user disable nmapui.service || true; fi
+  if ((active)); then systemctl --user restart nmapui.service; fi
   exit 1
 fi

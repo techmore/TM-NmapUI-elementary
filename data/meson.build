@@ -1,6 +1,7 @@
 desktop_conf = configuration_data()
 desktop_conf.set('APP_ID', app_id)
-desktop_conf.set('BINDIR', bindir)
+# Desktop Exec uses percent field codes even inside a quoted executable path.
+desktop_conf.set('BINDIR', bindir.replace('%', '%%'))
 
 configure_file(
   input: app_id + '.desktop.in',
@@ -28,4 +29,4 @@ install_data(
 )
 
 # systemd user unit template consumed by scripts/install-backend.sh.
-install_data('nmapui.service.in', install_dir: datadir / app_id)
+install_data('nmapui.service.in', 'engine-revision', install_dir: datadir / app_id)

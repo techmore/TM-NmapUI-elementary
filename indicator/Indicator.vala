@@ -203,6 +203,7 @@ namespace MSeries {
             for (uint i = 0; i < count; i++) {
                 var d = devices.get_object_element (i);
                 key.append (d.get_string_member_with_default ("ip", "")).append (d.get_string_member_with_default ("name", ""));
+                key.append ("\n").append (d.get_string_member_with_default ("vendor", "")).append ("\n");
                 key.append (d.has_member ("open_ports") && !d.get_null_member ("open_ports") ? d.get_int_member ("open_ports").to_string () : "-");
             }
             if (key.str == last_devices_key) return;
@@ -322,6 +323,15 @@ namespace MSeries {
                 panel_dot.visible = true;
                 panel_dot.add_css_class ("dot-off");
                 panel.set_tooltip_text ("Network Scanner · summary unavailable");
+                scan_target_label.visible = scan_step_label.visible = scan_time_label.visible = false;
+                net_link_label.label = "Network facts unavailable";
+                net_addr_label.visible = net_gw_label.visible = false;
+                hosts_value.label = changes_value.label = critical_value.label = "–";
+                last_scan_label.visible = monitor_label.visible = false;
+                devices_title.visible = device_scroll.visible = false;
+                last_devices_key = "";
+                Gtk.Widget? stale;
+                while ((stale = alert_box.get_first_child ()) != null) alert_box.remove (stale);
                 update_launcher (false, 0.0, 0);
                 return;
             }
@@ -332,9 +342,9 @@ namespace MSeries {
             string? message = data.has_member ("message") && !data.get_null_member ("message") ? data.get_string_member ("message") : null;
             state_detail.visible = message != null && message != "";
             state_detail.label = message ?? "";
-            bool scanning = state == "scanning" || state == "stopping";
+            bool scanning = state == "scanning" || state == "stopping" || state == "pausing" || state == "paused";
             progress.visible = scanning && data.has_member ("progress") && !data.get_null_member ("progress");
-            if (progress.visible) progress.fraction = (double) data.get_int_member ("progress") / 100.0;
+            if (progress.visible) progress.fraction = (double) int.min (100, int.max (0, (int) data.get_int_member ("progress"))) / 100.0;
 
             // Ongoing scan details.
             scan_target_label.visible = scan_step_label.visible = scan_time_label.visible = false;
@@ -385,7 +395,7 @@ namespace MSeries {
             if (hosts_known) panel_value.label = data.get_int_member ("hosts").to_string ();
             panel_dot.visible = state != "idle";
             if (state == "scanning" || state == "stopping") panel_dot.add_css_class ("dot-scan");
-            else if (state == "attention") panel_dot.add_css_class ("dot-warn");
+            else if (state == "attention" || state == "paused" || state == "pausing" || state == "unknown") panel_dot.add_css_class ("dot-warn");
             else if (state == "offline") panel_dot.add_css_class ("dot-off");
 
             Gtk.Widget? child;

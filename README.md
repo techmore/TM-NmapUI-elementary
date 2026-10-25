@@ -38,23 +38,49 @@ scripts/install.sh
 
 That builds and installs the app into `~/.local`, installs the Wingpanel indicator
 system-wide (sudo), pins **Network Scanner** to the dock, and runs `scripts/install-backend.sh`,
-which clones TM-NmapUI into `~/.local/share/nmapui/app`, creates its virtual environment,
+which clones a reviewed immutable TM-NmapUI revision into
+`~/.local/share/nmapui/releases/<commit>`, creates a private virtual environment,
 installs Chromium for PDF reports, and enables the loopback-only user service.
+This candidate defaults to the reviewed engine commit
+`0e7d22ed8f60ea325dd6cbc77192ea9ff64340b9` (`v2026.10.25`), recorded in
+`data/engine-revision` and also used by CI. `NMAPUI_REF` may override it with
+another full 40-character commit SHA; moving branch/tag names are rejected.
+The installer never updates an existing development checkout. This candidate
+source pin is not a claim of production or physical-desktop qualification.
 
 - `scripts/install.sh --no-indicator` skips the Wingpanel module; `--no-backend` skips the engine.
-- `NMAPUI_APP_DIR=~/Projects/TM-NmapUI scripts/install-backend.sh` runs the service from an existing checkout.
-- `NMAPUI_REF=<branch|tag|sha> scripts/install-backend.sh` pins the engine revision.
+- `NMAPUI_APP_DIR=~/Projects/TM-NmapUI NMAPUI_REF=<full-commit> scripts/install-backend.sh` clones committed source from an existing checkout without changing its branch, files or environment.
+- Re-running with another reviewed commit stages its dependencies before switching the managed service. A failed readiness check restores the previous unit; `scripts/install-backend.sh --rollback` switches back explicitly. Releases and scanner data are retained.
+- The installer refuses an unmanaged user unit, an active system scanner service, or another process serving port 9000. It never disables or removes development units. Use `--no-backend` when using an existing scanner service.
+- Put persistent operator settings in `~/.config/nmapui/backend.env`; updates preserve this file. Engine revision and source provenance are stored in each release's `.nmapui-release.json`.
 - The indicator loads at the next login; the installer never restarts Wingpanel.
 - Unprivileged scans use connect mode. SYN/OS/ARP scans need TM-NmapUI's root service
   (`packaging/ubuntu/install-service.sh`); nothing here grants raw-socket capabilities.
 
-Data stays private under `~/.local/share/nmapui` (engine) and `~/.local/share/nmapui-elementary`
-(web session and cookies). Remove everything with:
+Strict-auth access belongs to the embedded dashboard's WebKit session. Its cookies
+are not shared with the native status monitor or Wingpanel helper, which send no
+credentials. With loopback trust disabled, those separate monitors show activity
+unavailable even after dashboard login; use the authenticated dashboard for status.
+They never infer that an unreadable or malformed runtime response means idle.
 
-```bash
-systemctl --user disable --now nmapui.service
-rm -rf ~/.config/systemd/user/nmapui.service ~/.local/share/nmapui ~/.local/share/nmapui-elementary ~/.cache/nmapui-elementary
-```
+Data stays under `~/.local/share/nmapui` (engine) and `~/.local/share/nmapui-elementary`
+(web session and cookies); new engine releases and generated units use private
+permissions. `scripts/uninstall.sh` removes the native app from `~/.local`;
+`scripts/uninstall.sh --backend` also disables and removes only its managed user
+service. Both preserve scanner data, settings, previous releases and UI profiles.
+`scripts/uninstall-backend.sh` removes just the managed user service.
+The system Wingpanel module is separate: remove its installed `libnmapui.so`
+from the `pkg-config --variable=indicatorsdir wingpanel-9` directory as an
+administrator, then log out and back in. The uninstaller never restarts Wingpanel
+or touches a system/root scanner service.
+
+This front end targets elementary OS 9's GTK 4 / Wingpanel 9 stack; OS 8 is not a
+validated target. The per-user engine has the desktop user's privileges, and
+`NoNewPrivileges=true` prevents privilege escalation. It is separate from the
+root-mode Ubuntu appliance installer: install that service independently for
+privileged scanning and use `--no-backend` here. Physical-host discovery,
+unattended soak, real Drive consent, and stable elementary desktop qualification
+remain release gates.
 
 ## Build from source
 
@@ -90,14 +116,41 @@ meson install -C build
 ## Verify
 
 ```bash
-python3 -m pytest -q tests                      # summary helper
+python3 -m pytest -q tests                      # helper + isolated installer transactions
+meson test -C build --print-errorlogs          # native navigation/OAuth policy
 indicator/probe/run-probe.sh build/indicator out # indicator renders for four states (Xvfb)
 scripts/snapshot.sh build out                    # window renders, light and dark (Xvfb)
 desktop-file-validate build/data/io.github.techmore.NmapUI.desktop
 appstreamcli validate --no-net build/data/io.github.techmore.NmapUI.metainfo.xml
 ```
 
-CI runs the same steps in the `ghcr.io/elementary/docker:tanit-unstable` container.
+CI requires both the app and Wingpanel 9 module in the
+`ghcr.io/elementary/docker:tanit-unstable` container. This is the current validation
+baseline; it is not a completed test on a stable physical elementary OS desktop.
+CI also starts the shared engine pinned to
+`0e7d22ed8f60ea325dd6cbc77192ea9ff64340b9` on an isolated loopback port with temporary
+data and profile directories, network fingerprinting, startup traceroute, Vulners
+and automatic update checks disabled. It checks readiness and no active jobs,
+renders the online dashboard in light and dark modes, then sends the native
+Ctrl+3 action and checks the rendered Reports page with OCR. It never starts a scan.
+Screenshots, OCR text, readiness evidence and the engine revision are CI artifacts.
+The Docker runner alone disables WebKit's sandbox for these isolated render jobs
+because it denies nested namespaces; installed application behavior keeps the
+WebKit sandbox enabled.
+
+The helper keeps unavailable scanner activity distinct from idle, preserves
+paused/pausing state, bounds API response sizes and fetches independent summaries
+concurrently. Wi-Fi status reads use NetworkManager's cached access-point list
+without requesting a rescan. Failed summary reads clear outdated dropdown facts.
+
+Google Drive authorization opens in the system browser, including when the web
+UI first reserves an `about:blank` popup before receiving the authorization URL.
+Only the exact Google authorization endpoint with the engine's callback,
+`drive.file` scope and PKCE flow is handed off automatically. Other automatic
+cross-origin navigation is blocked; explicit ordinary web links open externally.
+This follows [Google's OAuth browser policy](https://developers.google.com/identity/protocols/oauth2/policies#use-secure-browsers).
+It does not establish Google project verification or real account-consent
+acceptance; those remain deployment checks.
 
 ## How it fits with the other repositories
 

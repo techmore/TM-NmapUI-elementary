@@ -41,10 +41,27 @@ executable(
   app_id,
   'src/Application.vala',
   'src/Backend.vala',
+  'src/RuntimeSchema.vala',
+  'src/PagePresentation.vala',
   'src/MainWindow.vala',
+  'src/NavigationPolicy.vala',
   dependencies: app_deps,
   install: true,
 )
+
+navigation_test = executable(
+  'test-navigation-policy',
+  'src/NavigationPolicy.vala', 'tests/test_navigation_policy.vala',
+  dependencies: [dependency('glib-2.0', version: '>= 2.74'), dependency('gio-2.0')],
+)
+test('navigation-policy', navigation_test)
+
+runtime_test = executable(
+  'test-runtime-schema',
+  'src/RuntimeSchema.vala', 'tests/test_runtime_schema.vala',
+  dependencies: [dependency('glib-2.0'), dependency('json-glib-1.0')],
+)
+test('runtime-schema', runtime_test)
 
 # One-shot JSON summary of the local scanner, shared by the Wingpanel indicator.
 install_data('helper/nmapui-summary', install_dir: bindir, install_mode: 'rwxr-xr-x')
@@ -58,3 +75,10 @@ gnome.post_install(
   gtk_update_icon_cache: true,
   update_desktop_database: true,
 )
+
+page_test = executable(
+  'test-page-presentation',
+  'src/PagePresentation.vala', 'tests/test_page_presentation.vala',
+  dependencies: [dependency('glib-2.0'), dependency('gobject-2.0')],
+)
+test('page-presentation', page_test)
