@@ -68,6 +68,14 @@ def test_network_info_without_interface_is_all_unknown(monkeypatch):
     assert summary.network_info(None)["address"] is None
 
 
+def test_malformed_device_addresses_do_not_crash_sorting_and_ipv6_is_supported(monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    live = {"hosts": [{"ip": "9" * 5000}, {"ip": "not-an-address"},
+                      {"ip": "::2"}, {"ip": "127.0.0.1"}, {"ip": "::1"}]}
+    out = summary.summarize(HEALTH, {"active_jobs": []}, None, None, live)
+    assert [row["ip"] for row in out["devices"]] == ["127.0.0.1", "::1", "::2"]
+
+
 def test_devices_are_sorted_numerically_and_fill_host_count():
     live = {"hosts": [{"ip": "10.0.0.20", "hostname": "b", "vendor": "V", "open_ports": 1},
                       {"ip": "10.0.0.3", "hostname": "", "vendor": "W", "open_ports": None}, {"hostname": "no-ip"}]}

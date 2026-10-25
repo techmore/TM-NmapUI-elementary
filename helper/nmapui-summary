@@ -5,6 +5,7 @@ Reads only the scanner's loopback HTTP API. Anything it cannot read stays null s
 the panel shows "unknown" rather than inventing a value.
 """
 import datetime
+import ipaddress
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
@@ -164,9 +165,13 @@ def summarize(health, runtime, history, auto, live=None):
     devices = []
     for host in objects(live.get("hosts"))[:200] if isinstance(live, dict) else []:
         if text(host.get("ip")):
+            try:
+                ipaddress.ip_address(host["ip"])
+            except ValueError:
+                continue
             devices.append({"ip": host["ip"], "name": text(host.get("hostname")) or "", "vendor": text(host.get("vendor")) or "",
                             "open_ports": number(host.get("open_ports"))})
-    devices.sort(key=lambda d: [int(part) if part.isdigit() else 0 for part in str(d["ip"]).split(".")])
+    devices.sort(key=lambda d: (ipaddress.ip_address(d["ip"]).version, int(ipaddress.ip_address(d["ip"]))))
     out["devices"] = devices
     if out["hosts"] is None and devices:
         out["hosts"] = len(devices)
