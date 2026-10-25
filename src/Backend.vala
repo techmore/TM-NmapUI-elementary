@@ -94,7 +94,7 @@ namespace NmapUI {
                 apply_offline ();
             } else {
                 start_requested = false;
-                version = health.get_string_member_with_default ("app_version", "");
+                version = RuntimeSchema.text (health, "app_version");
                 apply_runtime (yield fetch ("/api/runtime/status"));
             }
             in_flight = false;
@@ -169,8 +169,7 @@ namespace NmapUI {
         private void apply_runtime (Json.Object? runtime) {
             // Health is public, runtime status may fail authentication or become
             // unreadable. Neither case establishes that the scanner is idle.
-            if (runtime == null || !runtime.has_member ("active_jobs")
-                || runtime.get_member ("active_jobs").get_node_type () != Json.NodeType.ARRAY) {
+            if (!RuntimeSchema.valid (runtime)) {
                 state = ServiceState.UNAVAILABLE;
                 message = _("Cannot read scanner activity; open the scanner to check access and status.");
                 progress = -1;
@@ -206,10 +205,10 @@ namespace NmapUI {
             }
             var details = scan.has_member ("details") && !scan.get_null_member ("details")
                 ? scan.get_object_member ("details") : new Json.Object ();
-            message = details.get_string_member_with_default ("message", "");
-            target = details.get_string_member_with_default ("target", "");
+            message = RuntimeSchema.text (details, "message");
+            target = RuntimeSchema.text (details, "target");
             progress = details.has_member ("progress") && !details.get_null_member ("progress")
-                ? (int) details.get_int_member ("progress") : -1;
+                ? (int) int64.min (100, int64.max (-1, details.get_int_member ("progress"))) : -1;
             progress = int.min (100, int.max (-1, progress));
             hosts = details.has_member ("host_count") && !details.get_null_member ("host_count")
                 ? (int) details.get_int_member ("host_count") : -1;
@@ -235,12 +234,25 @@ namespace NmapUI {
         private async Json.Object? fetch (string path) {
             try {
                 var request = new Soup.Message ("GET", origin + path);
-                var bytes = yield session.send_and_read_async (request, Priority.DEFAULT, null);
+                request.set_flags (Soup.MessageFlags.NO_REDIRECT);
+                var stream = yield session.send_async (request, Priority.DEFAULT, null);
                 if (request.status_code != 200) {
+                    stream.close (null);
                     return null;
                 }
+                var body = new ByteArray ();
+                while (true) {
+                    var chunk = yield stream.read_bytes_async (65536, Priority.DEFAULT, null);
+                    if (chunk.get_size () == 0) break;
+                    if (body.len + chunk.get_size () > 2 * 1024 * 1024) {
+                        stream.close (null);
+                        return null;
+                    }
+                    body.append (chunk.get_data ());
+                }
+                stream.close (null);
                 var parser = new Json.Parser ();
-                parser.load_from_data ((string) bytes.get_data (), (ssize_t) bytes.get_size ());
+                parser.load_from_data ((string) body.data, (ssize_t) body.len);
                 var root = parser.get_root ();
                 if (root == null || root.get_node_type () != Json.NodeType.OBJECT) {
                     return null;

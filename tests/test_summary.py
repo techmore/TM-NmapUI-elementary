@@ -104,7 +104,31 @@ def test_malformed_optional_rows_stay_unknown(monkeypatch):
     monkeypatch.setattr(summary, "network_info", lambda iface: {})
     out = summary.summarize({"tool_versions": []}, {"active_jobs": [None, [], "bad"]},
                             {"history": [None, {"diff_summary": "bad"}]}, None, {"hosts": {"ip": "bad"}})
-    assert out["state"] == "idle" and out["devices"] == [] and out["hosts"] is None
+    assert out["state"] == "unknown" and out["devices"] == [] and out["hosts"] is None
+
+
+@pytest.mark.parametrize("job", [None, [], 7, {},
+    {"job_type": "scan", "status": "completed"},
+    {"job_type": "scan", "status": "running", "paused": "false"},
+    {"job_type": "scan", "status": "running", "details": []},
+    {"job_type": "scan", "status": "running", "details": {"message": {}}},
+    {"job_type": "scan", "status": "running", "details": {"progress": True}},
+    {"job_type": "scan", "status": "running", "details": {"host_count": 2**63}},
+])
+def test_invalid_active_job_cannot_establish_idle_or_scan_state(job, monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    out = summary.summarize(HEALTH, {"active_jobs": [job]}, None, None)
+    assert out["state"] == "unknown" and out["scan"] is None
+    assert out["alerts"] and out["progress"] is None
+
+
+def test_optional_api_text_cannot_emit_objects_into_indicator_schema(monkeypatch):
+    monkeypatch.setattr(summary, "network_info", lambda iface: {})
+    out = summary.summarize({"app_version": {}}, {"active_jobs": []},
+        {"history": [{"timestamp": [], "customer_name": {}, "critical_cves": 2**70}]},
+        {"enabled": True, "next_run": {}}, {"hosts": [{"ip": {}}, {"ip": "127.0.0.1", "hostname": []}]})
+    assert out["version"] is out["last_scan"] is out["last_customer"] is out["critical"] is None
+    assert out["monitor"] == "Enabled" and out["devices"] == [{"ip": "127.0.0.1", "name": "", "vendor": "", "open_ports": None}]
 
 
 def test_oversized_api_response_is_rejected(monkeypatch):

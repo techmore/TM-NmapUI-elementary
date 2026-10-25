@@ -41,6 +41,7 @@ executable(
   app_id,
   'src/Application.vala',
   'src/Backend.vala',
+  'src/RuntimeSchema.vala',
   'src/MainWindow.vala',
   'src/NavigationPolicy.vala',
   dependencies: app_deps,
@@ -53,6 +54,13 @@ navigation_test = executable(
   dependencies: [dependency('glib-2.0', version: '>= 2.74'), dependency('gio-2.0')],
 )
 test('navigation-policy', navigation_test)
+
+runtime_test = executable(
+  'test-runtime-schema',
+  'src/RuntimeSchema.vala', 'tests/test_runtime_schema.vala',
+  dependencies: [dependency('glib-2.0'), dependency('json-glib-1.0')],
+)
+test('runtime-schema', runtime_test)
 
 # One-shot JSON summary of the local scanner, shared by the Wingpanel indicator.
 install_data('helper/nmapui-summary', install_dir: bindir, install_mode: 'rwxr-xr-x')

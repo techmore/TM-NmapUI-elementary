@@ -42,7 +42,7 @@ which clones a reviewed immutable TM-NmapUI revision into
 `~/.local/share/nmapui/releases/<commit>`, creates a private virtual environment,
 installs Chromium for PDF reports, and enables the loopback-only user service.
 This candidate defaults to the reviewed engine commit
-`911f83d837c6ea992f2592b4633c59e4a5c1ee29` (`v2026.10.25`), recorded in
+`0e7d22ed8f60ea325dd6cbc77192ea9ff64340b9` (`v2026.10.25`), recorded in
 `data/engine-revision` and also used by CI. `NMAPUI_REF` may override it with
 another full 40-character commit SHA; moving branch/tag names are rejected.
 The installer never updates an existing development checkout. This candidate
@@ -56,6 +56,12 @@ source pin is not a claim of production or physical-desktop qualification.
 - The indicator loads at the next login; the installer never restarts Wingpanel.
 - Unprivileged scans use connect mode. SYN/OS/ARP scans need TM-NmapUI's root service
   (`packaging/ubuntu/install-service.sh`); nothing here grants raw-socket capabilities.
+
+Strict-auth access belongs to the embedded dashboard's WebKit session. Its cookies
+are not shared with the native status monitor or Wingpanel helper, which send no
+credentials. With loopback trust disabled, those separate monitors show activity
+unavailable even after dashboard login; use the authenticated dashboard for status.
+They never infer that an unreadable or malformed runtime response means idle.
 
 Data stays under `~/.local/share/nmapui` (engine) and `~/.local/share/nmapui-elementary`
 (web session and cookies); new engine releases and generated units use private
@@ -122,7 +128,7 @@ CI requires both the app and Wingpanel 9 module in the
 `ghcr.io/elementary/docker:tanit-unstable` container. This is the current validation
 baseline; it is not a completed test on a stable physical elementary OS desktop.
 CI also starts the shared engine pinned to
-`911f83d837c6ea992f2592b4633c59e4a5c1ee29` on an isolated loopback port with temporary
+`0e7d22ed8f60ea325dd6cbc77192ea9ff64340b9` on an isolated loopback port with temporary
 data and profile directories, network fingerprinting, startup traceroute, Vulners
 and automatic update checks disabled. It checks readiness and no active jobs,
 renders the online dashboard in light and dark modes, then sends the native

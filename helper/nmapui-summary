@@ -71,11 +71,39 @@ def network_info(default_interface):
 
 
 def number(value):
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and -(2**31) <= value < 2**31 else None
 
 
 def objects(value):
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def text(value):
+    return value if isinstance(value, str) else None
+
+
+def valid_runtime(runtime):
+    if not isinstance(runtime, dict) or not isinstance(runtime.get("active_jobs"), list):
+        return False
+    for job in runtime["active_jobs"]:
+        if not isinstance(job, dict) or not text(job.get("job_type")) or job.get("status") not in ("running", "cancelling"):
+            return False
+        if job["job_type"] != "scan":
+            continue
+        if any(key in job and not isinstance(job[key], bool) for key in ("paused", "pause_requested")):
+            return False
+        details = job.get("details")
+        if details is None:
+            continue
+        if not isinstance(details, dict):
+            return False
+        if any(details.get(key) is not None and not isinstance(details[key], str) for key in ("message", "target")):
+            return False
+        if any(details.get(key) is not None and (not isinstance(details[key], int) or isinstance(details[key], bool)) for key in ("progress", "host_count")):
+            return False
+        if details.get("host_count") is not None and (number(details["host_count"]) is None or details["host_count"] < 0):
+            return False
+    return True
 
 
 def summarize(health, runtime, history, auto, live=None):
@@ -84,15 +112,15 @@ def summarize(health, runtime, history, auto, live=None):
            "last_customer": None, "monitor": None, "alerts": [], "tools_missing": [], "network": None, "scan": None, "devices": []}
     if not isinstance(health, dict):
         return out
-    out["version"] = health.get("app_version")
-    out["network"] = network_info(health.get("default_interface"))
+    out["version"] = text(health.get("app_version"))
+    out["network"] = network_info(text(health.get("default_interface")))
     tools = health.get("tool_versions") if isinstance(health.get("tool_versions"), dict) else {}
     out["tools_missing"] = sorted(name for name in ("nmap",) if str(tools.get(name, "")).lower().startswith("not installed"))
     out["state"], out["label"] = "idle", "Idle"
-    if not isinstance(runtime, dict) or not isinstance(runtime.get("active_jobs"), list):
+    if not valid_runtime(runtime):
         out["state"], out["label"] = "unknown", "Scanner activity unavailable"
         out["alerts"].append("Scan activity could not be read; open the scanner to check access and status")
-    jobs = objects(runtime.get("active_jobs")) if isinstance(runtime, dict) else []
+    jobs = runtime["active_jobs"] if valid_runtime(runtime) else []
     scan = next((j for j in jobs if j.get("job_type") == "scan"), None)
     if scan:
         details = scan.get("details") if isinstance(scan.get("details"), dict) else {}
@@ -105,11 +133,11 @@ def summarize(health, runtime, history, auto, live=None):
         out["progress"] = number(details.get("progress")) if number(details.get("progress")) is not None else None
         if out["progress"] is not None:
             out["progress"] = max(0, min(100, out["progress"]))
-        out["message"] = details.get("message")
+        out["message"] = text(details.get("message"))
         out["hosts"] = number(details.get("host_count"))
         step = re.search(r"(\d+)/(\d+)(?::\s*(\S+))?", str(details.get("message") or ""))
-        out["scan"] = {"target": details.get("target"), "phase": details.get("phase"),
-                       "customer": details.get("customer_name"), "started_at": scan.get("started_at"),
+        out["scan"] = {"target": text(details.get("target")), "phase": text(details.get("phase")),
+                       "customer": text(details.get("customer_name")), "started_at": text(scan.get("started_at")),
                        "index": int(step[1]) if step else None, "total": int(step[2]) if step else None,
                        "current": step[3] if step and step[3] else None}
         try:
@@ -122,12 +150,12 @@ def summarize(health, runtime, history, auto, live=None):
     rows = objects(history.get("history")) if isinstance(history, dict) else []
     if rows:
         last = rows[0]
-        out["last_scan"] = last.get("timestamp")
-        out["last_customer"] = last.get("customer_name")
+        out["last_scan"] = text(last.get("timestamp"))
+        out["last_customer"] = text(last.get("customer_name"))
         if out["hosts"] is None:
             out["hosts"] = number(last.get("host_count", last.get("total_hosts")))
         diff = last.get("diff_summary") if isinstance(last.get("diff_summary"), dict) else {}
-        if diff.get("has_changes"):
+        if diff.get("has_changes") is True:
             out["changes"] = number(diff.get("change_count")) or 1
             out["alerts"].append("Changes since the previous scan")
         out["critical"] = number(last.get("critical_cves", last.get("critical_count")))
@@ -135,15 +163,15 @@ def summarize(health, runtime, history, auto, live=None):
             out["alerts"].append(f"{out['critical']} critical CVE" + ("s" if out["critical"] != 1 else ""))
     devices = []
     for host in objects(live.get("hosts"))[:200] if isinstance(live, dict) else []:
-        if isinstance(host, dict) and host.get("ip"):
-            devices.append({"ip": host["ip"], "name": host.get("hostname") or "", "vendor": host.get("vendor") or "",
+        if text(host.get("ip")):
+            devices.append({"ip": host["ip"], "name": text(host.get("hostname")) or "", "vendor": text(host.get("vendor")) or "",
                             "open_ports": number(host.get("open_ports"))})
     devices.sort(key=lambda d: [int(part) if part.isdigit() else 0 for part in str(d["ip"]).split(".")])
     out["devices"] = devices
     if out["hosts"] is None and devices:
         out["hosts"] = len(devices)
-    if isinstance(auto, dict) and auto.get("enabled"):
-        out["monitor"] = auto.get("next_run") or "Enabled"
+    if isinstance(auto, dict) and auto.get("enabled") is True:
+        out["monitor"] = text(auto.get("next_run")) or "Enabled"
     if out["tools_missing"]:
         out["alerts"].append("nmap is not installed; scans cannot run")
     if out["state"] == "idle" and out["alerts"]:
