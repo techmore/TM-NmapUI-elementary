@@ -42,6 +42,7 @@ executable(
   'src/Application.vala',
   'src/Backend.vala',
   'src/RuntimeSchema.vala',
+  'src/PagePresentation.vala',
   'src/MainWindow.vala',
   'src/NavigationPolicy.vala',
   dependencies: app_deps,
@@ -74,3 +75,10 @@ gnome.post_install(
   gtk_update_icon_cache: true,
   update_desktop_database: true,
 )
+
+page_test = executable(
+  'test-page-presentation',
+  'src/PagePresentation.vala', 'tests/test_page_presentation.vala',
+  dependencies: [dependency('glib-2.0'), dependency('gobject-2.0')],
+)
+test('page-presentation', page_test)

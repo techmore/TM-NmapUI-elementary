@@ -15,7 +15,7 @@ if [[ $tab == reports ]]; then
     sleep 0.25
   done
   test -n "${window:-}"
-  sleep 5
+  # Send the real shortcut as soon as the window exists; startup must retain it.
   xdotool windowfocus --sync "$window"
   xdotool key --clearmodifiers ctrl+3
 fi
