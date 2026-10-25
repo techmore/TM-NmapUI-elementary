@@ -45,7 +45,10 @@ jobs:
       - name: Render the native window offline in both color schemes
         env:
           NMAPUI_URL: http://127.0.0.1:19000
-        run: dbus-run-session -- scripts/snapshot.sh build window-out
+          # GitHub's Docker runner disallows the nested namespaces WebKit needs.
+          # Only this isolated offline render disables the WebKit sandbox.
+          WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
+        run: scripts/snapshot.sh build window-out
       - uses: actions/upload-artifact@v4
         with:
           name: window-renders-${{ matrix.image }}
