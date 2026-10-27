@@ -1,5 +1,6 @@
-/* The main window: native headerbar with segmented tabs and a live status chip, a WebKit view of
- * the scanner UI, and a Granite placeholder when the service is down. */
+/* The main window: native headerbar with linked tabs and a quiet activity button (only while
+ * something is happening), a WebKit view of the scanner UI, and a Granite placeholder when the
+ * service is down. */
 namespace NmapUI {
     public class MainWindow : Gtk.ApplicationWindow {
         public const string[] TABS = { "dashboard", "history", "reports", "customers", "logs", "settings" };
@@ -11,16 +12,11 @@ namespace NmapUI {
             html body { padding-top: 16px !important; }
         """;
 
+        // Only the thin page-load bar needs styling; everything else is stock Granite.
         private const string CHROME_CSS = """
-            .nmapui-status { padding: 1px 10px; border-radius: 999px; font-size: 0.85em; font-weight: 600;
-                             background: alpha(currentColor, 0.12); }
-            .nmapui-status.scanning { background: alpha(@accent_color, 0.2); color: @accent_color; }
-            .nmapui-status.starting { background: alpha(@warning_color, 0.2); color: @warning_color; }
-            .nmapui-status.offline { background: alpha(@error_color, 0.18); color: @error_color; }
             .nmapui-load { min-height: 2px; margin: 0; }
             .nmapui-load trough { min-height: 2px; background: transparent; border: none; }
             .nmapui-load progress { min-height: 2px; border: none; }
-            .nmapui-tabs button { padding-left: 14px; padding-right: 14px; }
         """;
 
         private unowned Application app;
@@ -31,7 +27,8 @@ namespace NmapUI {
         private Gtk.Stack stack;
         private Gtk.Overlay overlay;
         private Gtk.ProgressBar load_bar;
-        private Gtk.Box status_chip;
+        private Gtk.Box tabs;
+        private Gtk.Button status_chip;
         private Gtk.Label status_label;
         private Gtk.Spinner status_spinner;
         private Gtk.Button reload_button;
@@ -123,9 +120,8 @@ namespace NmapUI {
             };
             header.pack_start (reload_button);
 
-            var tabs = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0) { valign = Gtk.Align.CENTER };
-            tabs.add_css_class (Granite.STYLE_CLASS_LINKED);
-            tabs.add_css_class ("nmapui-tabs");
+            tabs = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0) { valign = Gtk.Align.CENTER };
+            tabs.add_css_class ("linked");
             Gtk.ToggleButton? first = null;
             for (int i = 0; i < TABS.length; i++) {
                 var button = new Gtk.ToggleButton.with_label (_(TAB_LABELS[i])) {
@@ -176,21 +172,16 @@ namespace NmapUI {
             };
             header.pack_end (menu_button);
 
-            status_chip = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) { valign = Gtk.Align.CENTER };
-            status_chip.add_css_class ("nmapui-status");
-            status_spinner = new Gtk.Spinner () { visible = false };
+            // Activity: a flat button that appears only while a scan runs or the service starts.
+            var chip_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
+            status_spinner = new Gtk.Spinner ();
             status_label = new Gtk.Label ("");
-            status_chip.append (status_spinner);
-            status_chip.append (status_label);
-            var chip_click = new Gtk.GestureClick ();
-            chip_click.released.connect (() => {
-                if (backend.state == ServiceState.OFFLINE) {
-                    backend.start_service ();
-                } else {
-                    tab_buttons[0].active = true;
-                }
-            });
-            status_chip.add_controller (chip_click);
+            status_label.add_css_class (Granite.CssClass.NUMERIC);
+            chip_box.append (status_spinner);
+            chip_box.append (status_label);
+            status_chip = new Gtk.Button () { child = chip_box, valign = Gtk.Align.CENTER, visible = false };
+            status_chip.add_css_class ("flat");
+            status_chip.clicked.connect (() => tab_buttons[0].active = true);
             header.pack_end (status_chip);
 
             set_titlebar (header);
@@ -205,22 +196,22 @@ namespace NmapUI {
 
             load_bar = new Gtk.ProgressBar () { valign = Gtk.Align.START, visible = false };
             load_bar.add_css_class ("nmapui-load");
-            load_bar.add_css_class (Granite.STYLE_CLASS_OSD);
+            load_bar.add_css_class ("osd");
             var web_overlay = new Gtk.Overlay () { child = web };
             web_overlay.add_overlay (load_bar);
             stack.add_named (web_overlay, "web");
 
-            offline_page = new Granite.Placeholder (_("The scanner service isn't running")) {
-                description = _("Network Scanner shows the TM-NmapUI engine that runs on this computer as a per-user service, bound to 127.0.0.1 only. Start it to continue."),
+            offline_page = new Granite.Placeholder (_("Scanner Service Isn’t Running")) {
+                description = _("Network Scanner uses a private scanner that runs on this computer for your account only. Start it to continue."),
                 icon = new ThemedIcon ("network-offline"),
                 halign = Gtk.Align.CENTER,
                 valign = Gtk.Align.CENTER
             };
             offline_start_button = offline_page.append_button (new ThemedIcon ("media-playback-start"),
-                _("Start the Scanner Service"), _("Runs systemctl --user start for your account"));
+                _("Start Scanner Service"), _("Starts now and keeps running while you’re logged in"));
             offline_start_button.clicked.connect (() => backend.start_service ());
             var setup_button = offline_page.append_button (new ThemedIcon ("help-contents"),
-                _("Set Up the Scanner Engine"), _("Install TM-NmapUI and its user service with scripts/install-backend.sh"));
+                _("Set Up the Scanner"), _("Opens the install guide in your web browser"));
             setup_button.clicked.connect (() => {
                 new Gtk.UriLauncher ("https://github.com/techmore/TM-NmapUI-elementary#install").launch.begin (this, null);
             });
@@ -232,9 +223,9 @@ namespace NmapUI {
             };
             var starting_spinner = new Gtk.Spinner () { spinning = true, width_request = 32, height_request = 32 };
             starting_label = new Gtk.Label (_("Starting the scanner service…"));
-            starting_label.add_css_class (Granite.STYLE_CLASS_H3_LABEL);
+            starting_label.add_css_class (Granite.HeaderLabel.Size.H3.to_string ());
             var starting_hint = new Gtk.Label (_("This usually takes a few seconds."));
-            starting_hint.add_css_class (Granite.STYLE_CLASS_DIM_LABEL);
+            starting_hint.add_css_class (Granite.CssClass.DIM);
             starting_box.append (starting_spinner);
             starting_box.append (starting_label);
             starting_box.append (starting_hint);
@@ -323,13 +314,10 @@ namespace NmapUI {
         // --- Backend state --------------------------------------------------------------------
 
         private void on_backend_changed () {
-            foreach (var css in new string[] { "idle", "scanning", "starting", "offline" }) {
-                status_chip.remove_css_class (css);
-            }
-            status_chip.add_css_class (backend.state.css ());
-            status_spinner.visible = backend.state == ServiceState.SCANNING
+            bool busy = backend.state == ServiceState.SCANNING
                 || backend.state == ServiceState.STOPPING || backend.state == ServiceState.STARTING;
-            status_spinner.spinning = status_spinner.visible;
+            status_chip.visible = busy;
+            status_spinner.spinning = busy;
 
             string text = backend.state.label ();
             string tooltip = text;
@@ -349,14 +337,12 @@ namespace NmapUI {
                         ? _("Scanner service %s is running on %s").printf (backend.version, ((Application) application).origin)
                         : text;
                     break;
-                case ServiceState.OFFLINE:
-                    tooltip = _("Click to start the scanner service");
-                    break;
                 default:
                     break;
             }
             status_label.label = text;
             status_chip.tooltip_text = tooltip;
+            status_chip.update_property (Gtk.AccessibleProperty.LABEL, text, -1);
 
             if (backend.state == ServiceState.STARTING) {
                 stack.visible_child_name = "starting";
@@ -369,6 +355,8 @@ namespace NmapUI {
                 stack.visible_child_name = "web";
             }
             reload_button.sensitive = backend.state != ServiceState.STARTING;
+            // Tabs only mean something while the scanner page is showing.
+            tabs.sensitive = stack.visible_child_name == "web";
         }
 
         private void on_backend_online () {
