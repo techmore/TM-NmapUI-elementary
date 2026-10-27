@@ -42,8 +42,9 @@ if ((indicator)); then
   meson compile -C "$ibuild" >/dev/null
   indicators_dir=$(pkg-config --variable=indicatorsdir wingpanel-9)
   sudo install -m 0755 "$ibuild/indicator/libnmapui.so" "$indicators_dir/libnmapui.so"
-  sudo install -Dm644 "$root/indicator/icons/mseries-nmapui-radar-symbolic.svg" \
-    /usr/share/icons/hicolor/symbolic/apps/mseries-nmapui-radar-symbolic.svg
+  for icon in "$root"/indicator/icons/mseries-nmapui-radar*-symbolic.svg; do
+    sudo install -Dm644 "$icon" "/usr/share/icons/hicolor/symbolic/apps/$(basename "$icon")"
+  done
   sudo gtk-update-icon-cache -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
   echo "installed $indicators_dir/libnmapui.so (loads at next login; Wingpanel was not restarted)"
 fi

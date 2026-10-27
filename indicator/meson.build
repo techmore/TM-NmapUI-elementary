@@ -17,6 +17,8 @@ shared_module(
 
 install_data(
   'icons/mseries-nmapui-radar-symbolic.svg',
+  'icons/mseries-nmapui-radar-idle-symbolic.svg',
+  'icons/mseries-nmapui-radar-attention-symbolic.svg',
   install_dir: datadir / 'icons' / 'hicolor' / 'symbolic' / 'apps',
 )
 

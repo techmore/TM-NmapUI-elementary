@@ -1,5 +1,7 @@
-/* Scanner summary for Pantheon's Wingpanel: scan state, hosts and alerts, with an Open button.
- * Reads one JSON object from ~/.local/bin/nmapui-summary (loopback scanner API only). */
+/* Network Scanner indicator for Pantheon's Wingpanel.
+ * The panel shows one symbolic icon whose shape follows the scanner state; the popover is a plain
+ * elementary menu: a header with the state, scan progress when scanning, any alerts, a short
+ * summary and menu items. Data comes from ~/.local/bin/nmapui-summary (loopback scanner API only). */
 using GLib;
 using Gtk;
 using Json;
@@ -7,39 +9,31 @@ using Wingpanel;
 
 namespace MSeries {
     public class NmapUIIndicator : Wingpanel.Indicator {
-        private const string ICON = "mseries-nmapui-radar-symbolic";
-        private const uint POLL_SECONDS = 10;
+        private const string APP_ID = "io.github.techmore.NmapUI";
+        private const string ICON_IDLE = "mseries-nmapui-radar-idle-symbolic";
+        private const string ICON_SCANNING = "mseries-nmapui-radar-symbolic";
+        private const string ICON_ATTENTION = "mseries-nmapui-radar-attention-symbolic";
+        // Poll slowly in the background and quickly only while someone is looking.
+        private const uint POLL_CLOSED_SECONDS = 30;
+        private const uint POLL_OPEN_SECONDS = 3;
 
-        private Gtk.Box panel;
-        private Gtk.Label panel_value;
-        private Gtk.Label panel_dot;
+        private Gtk.Image panel_icon;
         private Gtk.Box menu;
-        private Gtk.Label state_title;
-        private Gtk.Label state_detail;
+        private Granite.HeaderLabel header;
         private Gtk.ProgressBar progress;
-        private Gtk.Label scan_target_label;
-        private Gtk.Label scan_step_label;
-        private Gtk.Label scan_time_label;
-        private Gtk.Label net_link_label;
-        private Gtk.Label net_addr_label;
-        private Gtk.Label net_gw_label;
-        private Gtk.Label devices_title;
-        private Gtk.ListBox device_list;
-        private Gtk.ScrolledWindow device_scroll;
-        private string last_devices_key = "";
-        private Gtk.Label hosts_value;
-        private Gtk.Label changes_value;
-        private Gtk.Label critical_value;
+        private Gtk.Label progress_detail;
         private Gtk.Box alert_box;
+        private Gtk.Separator summary_separator;
+        private Gtk.Label devices_label;
+        private Gtk.Label network_label;
         private Gtk.Label last_scan_label;
-        private Gtk.Label monitor_label;
-        private Gtk.Button open_button;
+        private Gtk.Button start_service_button;
         private string helper;
         private bool in_flight = false;
+        private bool is_open = false;
         private uint poll_source = 0;
         private string last_json = "";
         private DBusConnection? bus = null;
-        private const string LAUNCHER_URI = "application://io.github.techmore.NmapUI.desktop";
 
         public NmapUIIndicator () {
             GLib.Object (code_name: "nmapui");
@@ -48,102 +42,48 @@ namespace MSeries {
         construct {
             helper = GLib.Path.build_filename (Environment.get_home_dir (), ".local", "bin", "nmapui-summary");
 
-            panel = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 4);
-            panel.add_css_class ("mseries-nmapui-bar");
-            panel.append (new Gtk.Image.from_icon_name (ICON) { pixel_size = 16, valign = Gtk.Align.CENTER });
-            panel_value = new Gtk.Label ("") { valign = Gtk.Align.CENTER, visible = false };
-            panel_value.add_css_class ("seg-value");
-            panel.append (panel_value);
-            panel_dot = new Gtk.Label ("●") { valign = Gtk.Align.CENTER, visible = false };
-            panel.append (panel_dot);
-            panel.set_tooltip_text ("Network Scanner · loading…");
+            panel_icon = new Gtk.Image.from_icon_name (ICON_IDLE);
+            update_panel (ICON_IDLE, false, _("Network Scanner"), _("Loading…"));
             this.visible = true;
 
-            menu = new Gtk.Box (Gtk.Orientation.VERTICAL, 8) {
-                margin_top = 8, margin_bottom = 8, margin_start = 8, margin_end = 8, width_request = 320
+            menu = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) { margin_top = 3, margin_bottom = 3, width_request = 280 };
+
+            header = new Granite.HeaderLabel (_("Network Scanner")) {
+                secondary_text = _("Loading…"), size = Granite.HeaderLabel.Size.H4,
+                margin_top = 3, margin_bottom = 3
             };
-            menu.add_css_class ("mseries-nmapui");
-            install_style (menu.get_display ());
+            menu.append (header);
 
-            // Status card: state, current activity and scan progress.
-            var card = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
-            card.add_css_class ("card");
-            state_title = new Gtk.Label ("Loading…") { xalign = 0 };
-            state_title.add_css_class ("state-title");
-            state_detail = new Gtk.Label ("") { xalign = 0, wrap = true, visible = false };
-            state_detail.add_css_class ("caption");
-            state_detail.add_css_class ("dim-label");
-            progress = new Gtk.ProgressBar () { visible = false };
-            card.append (state_title);
-            card.append (state_detail);
-            card.append (progress);
-            scan_target_label = new Gtk.Label ("") { xalign = 0, visible = false };
-            scan_step_label = new Gtk.Label ("") { xalign = 0, visible = false };
-            scan_time_label = new Gtk.Label ("") { xalign = 0, visible = false };
-            foreach (var l in new Gtk.Label[] { scan_target_label, scan_step_label, scan_time_label }) {
-                l.add_css_class ("caption");
-                l.add_css_class ("numeric");
-                card.append (l);
-            }
-            menu.append (card);
+            progress = new Gtk.ProgressBar () { margin_start = 12, margin_end = 12, margin_top = 3, visible = false };
+            progress.update_property (Gtk.AccessibleProperty.LABEL, _("Scan progress"), -1);
+            progress_detail = dim_label ();
+            progress_detail.margin_top = 6;
+            progress_detail.margin_bottom = 6;
+            menu.append (progress);
+            menu.append (progress_detail);
 
-            // Network card: where this machine sits, from the kernel (no internet lookups).
-            var net = new Gtk.Box (Gtk.Orientation.VERTICAL, 2);
-            net.add_css_class ("card");
-            var net_title = new Gtk.Label ("Network") { xalign = 0 };
-            net_title.add_css_class ("state-title");
-            net_link_label = new Gtk.Label ("") { xalign = 0 };
-            net_addr_label = new Gtk.Label ("") { xalign = 0 };
-            net_gw_label = new Gtk.Label ("") { xalign = 0 };
-            net.append (net_title);
-            foreach (var l in new Gtk.Label[] { net_link_label, net_addr_label, net_gw_label }) {
-                l.add_css_class ("caption");
-                l.add_css_class ("numeric");
-                net.append (l);
-            }
-            menu.append (net);
-
-            // Three headline numbers.
-            var metrics = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) { homogeneous = true };
-            metrics.append (metric ("Hosts", out hosts_value));
-            metrics.append (metric ("Changes", out changes_value));
-            metrics.append (metric ("Critical", out critical_value));
-            menu.append (metrics);
-
-            alert_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
+            alert_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) { visible = false };
             menu.append (alert_box);
 
-            // Devices from the latest scan: name or vendor, address and open-port count.
-            devices_title = new Gtk.Label ("Devices") { xalign = 0, visible = false };
-            devices_title.add_css_class ("state-title");
-            device_list = new Gtk.ListBox () { selection_mode = Gtk.SelectionMode.NONE };
-            device_list.add_css_class ("device-list");
-            device_scroll = new Gtk.ScrolledWindow () { child = device_list, min_content_height = 60, max_content_height = 200,
-                                                        propagate_natural_height = true, hscrollbar_policy = Gtk.PolicyType.NEVER, visible = false };
-            menu.append (devices_title);
-            menu.append (device_scroll);
-
-            last_scan_label = new Gtk.Label ("") { xalign = 0, wrap = true };
-            last_scan_label.add_css_class ("caption");
-            last_scan_label.add_css_class ("dim-label");
-            monitor_label = new Gtk.Label ("") { xalign = 0, visible = false };
-            monitor_label.add_css_class ("caption");
-            monitor_label.add_css_class ("dim-label");
+            summary_separator = separator ();
+            menu.append (summary_separator);
+            // Read-only facts are dimmed so the menu items below stay the obvious things to click.
+            devices_label = info_label ();
+            network_label = info_label ();
+            last_scan_label = info_label ();
+            foreach (var l in new Gtk.Label[] { devices_label, network_label, last_scan_label }) l.add_css_class (Granite.CssClass.DIM);
+            menu.append (devices_label);
+            menu.append (network_label);
             menu.append (last_scan_label);
-            menu.append (monitor_label);
 
-            // Footer dock: the one action that matters.
-            var dock = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
-            dock.add_css_class ("mseries-dock");
-            open_button = new Gtk.Button.with_label ("Open Network Scanner") { hexpand = true };
-            open_button.add_css_class ("suggested-action");
+            menu.append (separator ());
+            start_service_button = menu_item (_("Start Scanner Service"));
+            start_service_button.visible = false;
+            start_service_button.clicked.connect (start_service);
+            menu.append (start_service_button);
+            var open_button = menu_item (_("Open Network Scanner"));
             open_button.clicked.connect (open_app);
-            var refresh_button = new Gtk.Button.from_icon_name ("view-refresh-symbolic") { tooltip_text = "Refresh" };
-            refresh_button.add_css_class ("flat");
-            refresh_button.clicked.connect (() => refresh ());
-            dock.append (open_button);
-            dock.append (refresh_button);
-            menu.append (dock);
+            menu.append (open_button);
 
             try {
                 bus = Bus.get_sync (BusType.SESSION);
@@ -151,88 +91,54 @@ namespace MSeries {
                 bus = null;
             }
             refresh ();
-            poll_source = Timeout.add_seconds (POLL_SECONDS, () => { refresh (); return Source.CONTINUE; });
+            schedule_poll ();
         }
 
         ~NmapUIIndicator () {
             if (poll_source != 0) Source.remove (poll_source);
         }
 
-        private Gtk.Widget metric (string title, out Gtk.Label value) {
-            var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
-            box.add_css_class ("metric");
-            value = new Gtk.Label ("–");
-            value.add_css_class ("metric-value");
-            var caption = new Gtk.Label (title);
-            caption.add_css_class ("caption");
-            caption.add_css_class ("dim-label");
-            box.append (value);
-            box.append (caption);
-            return box;
+        private static Gtk.Separator separator () {
+            return new Gtk.Separator (Gtk.Orientation.HORIZONTAL) { margin_top = 3, margin_bottom = 3 };
         }
 
-        private static void install_style (Gdk.Display display) {
-            var style = new Gtk.CssProvider ();
-            style.load_from_string (
-                ".mseries-nmapui { font-size: 9pt; } " +
-                ".mseries-nmapui .caption { font-size: 8pt; } " +
-                ".mseries-nmapui .card { padding: 8px 10px; border-radius: 8px; background: alpha(currentColor, 0.06); } " +
-                ".mseries-nmapui .state-title { font-weight: 700; font-size: 10pt; } " +
-                ".mseries-nmapui .metric { padding: 6px 4px; border-radius: 8px; background: alpha(currentColor, 0.06); } " +
-                ".mseries-nmapui .metric-value { font-weight: 700; font-size: 14pt; font-feature-settings: \"tnum\"; } " +
-                ".mseries-nmapui .alert-row { padding: 5px 8px; border-radius: 8px; background: alpha(@warning_color, 0.18); } " +
-                ".mseries-nmapui .alert-row.bad { background: alpha(@error_color, 0.18); } " +
-                ".mseries-nmapui .device-list { background: transparent; } " +
-                ".mseries-nmapui .device-row { padding: 4px 8px; border-radius: 8px; background: alpha(currentColor, 0.05); margin: 1px 0; } " +
-                ".mseries-nmapui .device-name { font-weight: 600; } " +
-                ".mseries-nmapui .chip { padding: 0 7px; border-radius: 99px; font-size: 7.5pt; font-weight: 700; background: alpha(@accent_color, 0.2); color: @accent_color; } " +
-                ".mseries-nmapui .mseries-dock { margin-top: 2px; } " +
-                ".mseries-nmapui-bar .seg-value { font-size: 7pt; font-weight: 700; } " +
-                ".mseries-nmapui-bar .dot-scan { color: @accent_color; font-size: 7pt; } " +
-                ".mseries-nmapui-bar .dot-warn { color: @warning_color; font-size: 7pt; } " +
-                ".mseries-nmapui-bar .dot-off { opacity: 0.45; font-size: 7pt; } ");
-            Gtk.StyleContext.add_provider_for_display (display, style, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+        /* Read-only line in the summary block, aligned with menu item text. */
+        private static Gtk.Label info_label () {
+            var label = new Gtk.Label ("") {
+                xalign = 0, ellipsize = Pango.EllipsizeMode.END, visible = false,
+                margin_start = 12, margin_end = 12, margin_top = 3, margin_bottom = 3, selectable = false
+            };
+            return label;
         }
 
-        private void update_devices (Json.Object data) {
-            Json.Array? devices = data.has_member ("devices") && !data.get_null_member ("devices") ? data.get_array_member ("devices") : null;
-            uint count = devices != null ? devices.get_length () : 0;
-            devices_title.visible = device_scroll.visible = count > 0;
-            devices_title.label = "Devices · %u".printf (count);
-            var key = new StringBuilder ();
-            for (uint i = 0; i < count; i++) {
-                var d = devices.get_object_element (i);
-                key.append (d.get_string_member_with_default ("ip", "")).append (d.get_string_member_with_default ("name", ""));
-                key.append (d.has_member ("open_ports") && !d.get_null_member ("open_ports") ? d.get_int_member ("open_ports").to_string () : "-");
-            }
-            if (key.str == last_devices_key) return;
-            last_devices_key = key.str;
-            Gtk.Widget? child;
-            while ((child = device_list.get_first_child ()) != null) device_list.remove (child);
-            for (uint i = 0; i < count; i++) {
-                var d = devices.get_object_element (i);
-                string name = d.get_string_member_with_default ("name", "");
-                string vendor = d.get_string_member_with_default ("vendor", "");
-                if (name == "") name = vendor.has_prefix ("(") ? "Unknown device" : (vendor != "" ? vendor : "Unknown device");
-                var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
-                row.add_css_class ("device-row");
-                var text = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) { hexpand = true };
-                var title = new Gtk.Label (name) { xalign = 0, ellipsize = Pango.EllipsizeMode.END };
-                title.add_css_class ("device-name");
-                var sub = new Gtk.Label (d.get_string_member_with_default ("ip", "") + (vendor != "" && vendor != name ? " · " + vendor : "")) { xalign = 0, ellipsize = Pango.EllipsizeMode.END };
-                sub.add_css_class ("caption");
-                sub.add_css_class ("dim-label");
-                sub.add_css_class ("numeric");
-                text.append (title);
-                text.append (sub);
-                row.append (text);
-                if (d.has_member ("open_ports") && !d.get_null_member ("open_ports")) {
-                    var chip = new Gtk.Label ("%lld open".printf (d.get_int_member ("open_ports"))) { valign = Gtk.Align.CENTER };
-                    chip.add_css_class ("chip");
-                    row.append (chip);
-                }
-                device_list.append (row);
-            }
+        private static Gtk.Label dim_label () {
+            var label = info_label ();
+            label.add_css_class (Granite.CssClass.DIM);
+            label.add_css_class (Granite.CssClass.SMALL);
+            label.add_css_class (Granite.CssClass.NUMERIC);
+            return label;
+        }
+
+        private static Gtk.Button menu_item (string text) {
+            var button = new Gtk.Button () { child = new Gtk.Label (text) { xalign = 0 } };
+            button.add_css_class ("menuitem");
+            return button;
+        }
+
+        private void schedule_poll () {
+            if (poll_source != 0) Source.remove (poll_source);
+            poll_source = Timeout.add_seconds (is_open ? POLL_OPEN_SECONDS : POLL_CLOSED_SECONDS, () => {
+                refresh ();
+                return Source.CONTINUE;
+            });
+        }
+
+        private void update_panel (string icon, bool dim, string title, string detail) {
+            panel_icon.icon_name = icon;
+            if (dim) panel_icon.add_css_class (Granite.CssClass.DIM); else panel_icon.remove_css_class (Granite.CssClass.DIM);
+            panel_icon.tooltip_markup = "%s\n%s".printf (Markup.escape_text (title),
+                Granite.TOOLTIP_SECONDARY_TEXT_MARKUP.printf (Markup.escape_text (detail)));
+            panel_icon.update_property (Gtk.AccessibleProperty.LABEL, "%s: %s".printf (title, detail), -1);
         }
 
         /* Dock badge and progress through the Unity LauncherEntry protocol the elementary dock reads. */
@@ -245,24 +151,40 @@ namespace MSeries {
             props.add ("{sv}", "count", new Variant.int64 (alerts));
             try {
                 bus.emit_signal (null, "/com/canonical/unity/launcherentry/nmapui", "com.canonical.Unity.LauncherEntry",
-                                 "Update", new Variant ("(sa{sv})", LAUNCHER_URI, props));
+                                 "Update", new Variant ("(sa{sv})", "application://" + APP_ID + ".desktop", props));
             } catch (Error e) {
                 warning ("Could not update the dock entry: %s", e.message);
             }
         }
 
         private void open_app () {
+            close ();
+            var info = new DesktopAppInfo (APP_ID + ".desktop");
             try {
-                var info = new DesktopAppInfo ("io.github.techmore.NmapUI.desktop");
                 if (info != null) {
-                    info.launch (null, null);
+                    info.launch (null, menu.get_display ().get_app_launch_context ());
                 } else {
-                    Process.spawn_command_line_async ("io.github.techmore.NmapUI");
+                    Process.spawn_command_line_async (APP_ID);
                 }
             } catch (Error e) {
                 warning ("Could not open Network Scanner: %s", e.message);
             }
-            close ();
+        }
+
+        private void start_service () {
+            start_service_button.sensitive = false;
+            header.secondary_text = _("Starting…");
+            try {
+                var process = new Subprocess (SubprocessFlags.NONE, "systemctl", "--user", "start", "nmapui.service");
+                process.wait_async.begin (null, () => {
+                    start_service_button.sensitive = true;
+                    last_json = "";
+                    refresh ();
+                });
+            } catch (Error e) {
+                start_service_button.sensitive = true;
+                warning ("Could not start the scanner service: %s", e.message);
+            }
         }
 
         private void refresh () {
@@ -287,17 +209,32 @@ namespace MSeries {
         }
 
         private static string relative (string iso) {
-            var then = new DateTime.from_iso8601 (iso, null);
+            var then = new DateTime.from_iso8601 (iso, new TimeZone.utc ());
             if (then == null) return iso;
             var seconds = new DateTime.now_utc ().difference (then) / TimeSpan.SECOND;
-            if (seconds < 90) return "just now";
-            if (seconds < 5400) return "%d min ago".printf ((int) (seconds / 60));
-            if (seconds < 129600) return "%d h ago".printf ((int) (seconds / 3600));
-            return "%d days ago".printf ((int) (seconds / 86400));
+            if (seconds < 90) return _("just now");
+            if (seconds < 5400) return ngettext ("%d minute ago", "%d minutes ago", (ulong) (seconds / 60)).printf ((int) (seconds / 60));
+            if (seconds < 129600) return ngettext ("%d hour ago", "%d hours ago", (ulong) (seconds / 3600)).printf ((int) (seconds / 3600));
+            return ngettext ("%d day ago", "%d days ago", (ulong) (seconds / 86400)).printf ((int) (seconds / 86400));
         }
 
-        private static string number_or_dash (Json.Object o, string key) {
-            return o.has_member (key) && !o.get_null_member (key) ? o.get_int_member (key).to_string () : "–";
+        private static string duration (int64 sec) {
+            if (sec < 60) return _("under a minute");
+            if (sec < 3600) return ngettext ("%d minute", "%d minutes", (ulong) (sec / 60)).printf ((int) (sec / 60));
+            return _("%d h %d min").printf ((int) (sec / 3600), (int) ((sec % 3600) / 60));
+        }
+
+        private static string str (Json.Object o, string key) {
+            return o.has_member (key) && !o.get_null_member (key) ? o.get_string_member (key) : "";
+        }
+
+        private static bool has (Json.Object o, string key) {
+            return o.has_member (key) && !o.get_null_member (key);
+        }
+
+        private void set_info (Gtk.Label label, string text) {
+            label.label = text;
+            label.visible = text != "";
         }
 
         private void apply (string text) {
@@ -311,109 +248,102 @@ namespace MSeries {
                 if (root != null && root.get_node_type () == Json.NodeType.OBJECT) data = root.get_object ();
             } catch (Error e) {}
 
-            panel_dot.remove_css_class ("dot-scan");
-            panel_dot.remove_css_class ("dot-warn");
-            panel_dot.remove_css_class ("dot-off");
-            if (data == null) {
-                state_title.label = "Summary unavailable";
-                state_detail.visible = false;
-                progress.visible = false;
-                panel_value.visible = false;
-                panel_dot.visible = true;
-                panel_dot.add_css_class ("dot-off");
-                panel.set_tooltip_text ("Network Scanner · summary unavailable");
-                update_launcher (false, 0.0, 0);
-                return;
-            }
-
-            string state = data.get_string_member_with_default ("state", "offline");
-            string label = data.get_string_member_with_default ("label", "Unknown");
-            state_title.label = label;
-            string? message = data.has_member ("message") && !data.get_null_member ("message") ? data.get_string_member ("message") : null;
-            state_detail.visible = message != null && message != "";
-            state_detail.label = message ?? "";
+            string state = data != null ? (str (data, "state") != "" ? str (data, "state") : "offline") : "offline";
             bool scanning = state == "scanning" || state == "stopping";
-            progress.visible = scanning && data.has_member ("progress") && !data.get_null_member ("progress");
+            bool offline = data == null || state == "offline";
+
+            // Header: one calm sentence about where things stand.
+            string status;
+            if (data == null) status = _("Status unavailable");
+            else if (offline) status = _("Scanner service is not running");
+            else if (state == "stopping") status = _("Stopping scan…");
+            else if (scanning) status = _("Scanning…");
+            else if (state == "attention") status = _("Needs attention");
+            else status = _("Up to date");
+            header.secondary_text = status;
+            start_service_button.visible = data != null && offline;
+
+            // Scan progress.
+            progress.visible = scanning && has (data, "progress");
             if (progress.visible) progress.fraction = (double) data.get_int_member ("progress") / 100.0;
-
-            // Ongoing scan details.
-            scan_target_label.visible = scan_step_label.visible = scan_time_label.visible = false;
-            if (scanning && data.has_member ("scan") && !data.get_null_member ("scan")) {
+            string detail = "";
+            if (scanning && has (data, "scan")) {
                 var scan = data.get_object_member ("scan");
-                string target = scan.has_member ("target") && !scan.get_null_member ("target") ? scan.get_string_member ("target") : "";
-                scan_target_label.visible = target != "";
-                scan_target_label.label = "Target %s".printf (target);
-                if (scan.has_member ("index") && !scan.get_null_member ("index") && scan.has_member ("total") && !scan.get_null_member ("total")) {
-                    string current = scan.has_member ("current") && !scan.get_null_member ("current") ? " · " + scan.get_string_member ("current") : "";
-                    scan_step_label.visible = true;
-                    scan_step_label.label = "Host %lld of %lld%s".printf (scan.get_int_member ("index"), scan.get_int_member ("total"), current);
-                }
-                if (scan.has_member ("elapsed_seconds") && !scan.get_null_member ("elapsed_seconds")) {
-                    int64 sec = scan.get_int_member ("elapsed_seconds");
-                    scan_time_label.visible = true;
-                    scan_time_label.label = sec >= 3600 ? "Running %lldh %lldm".printf (sec / 3600, (sec % 3600) / 60) : "Running %lldm %llds".printf (sec / 60, sec % 60);
-                }
+                var parts = new string[] {};
+                if (str (scan, "target") != "") parts += str (scan, "target");
+                if (has (scan, "index") && has (scan, "total"))
+                    parts += _("host %d of %d").printf ((int) scan.get_int_member ("index"), (int) scan.get_int_member ("total"));
+                if (has (scan, "elapsed_seconds")) parts += duration (scan.get_int_member ("elapsed_seconds"));
+                detail = string.joinv (" · ", parts);
             }
+            set_info (progress_detail, detail);
 
-            // Network facts.
-            net_link_label.label = "Link unknown";
-            net_addr_label.label = "";
-            net_gw_label.label = "";
-            if (data.has_member ("network") && !data.get_null_member ("network")) {
-                var net = data.get_object_member ("network");
-                string iface = net.has_member ("interface") && !net.get_null_member ("interface") ? net.get_string_member ("interface") : "";
-                string ssid = net.has_member ("ssid") && !net.get_null_member ("ssid") ? net.get_string_member ("ssid") : "";
-                string addr = net.has_member ("address") && !net.get_null_member ("address") ? net.get_string_member ("address") : "";
-                string cidr = net.has_member ("cidr") && !net.get_null_member ("cidr") ? net.get_string_member ("cidr") : "";
-                string gw = net.has_member ("gateway") && !net.get_null_member ("gateway") ? net.get_string_member ("gateway") : "";
-                net_link_label.label = iface == "" ? "Offline" : (ssid != "" ? "%s · %s".printf (ssid, iface) : iface);
-                net_addr_label.label = addr == "" ? "" : "Address %s%s".printf (addr, cidr != "" ? " (" + cidr + ")" : "");
-                net_gw_label.label = gw == "" ? "" : "Gateway %s".printf (gw);
-            }
-            net_addr_label.visible = net_addr_label.label != "";
-            net_gw_label.visible = net_gw_label.label != "";
-
-            update_devices (data);
-
-            hosts_value.label = number_or_dash (data, "hosts");
-            changes_value.label = number_or_dash (data, "changes");
-            critical_value.label = number_or_dash (data, "critical");
-
-            // Panel: host count when known, plus one state dot.
-            bool hosts_known = data.has_member ("hosts") && !data.get_null_member ("hosts");
-            panel_value.visible = hosts_known;
-            if (hosts_known) panel_value.label = data.get_int_member ("hosts").to_string ();
-            panel_dot.visible = state != "idle";
-            if (state == "scanning" || state == "stopping") panel_dot.add_css_class ("dot-scan");
-            else if (state == "attention") panel_dot.add_css_class ("dot-warn");
-            else if (state == "offline") panel_dot.add_css_class ("dot-off");
-
+            // Alerts: plain rows with a symbolic icon, no tinted boxes.
             Gtk.Widget? child;
             while ((child = alert_box.get_first_child ()) != null) alert_box.remove (child);
-            if (data.has_member ("alerts")) {
+            int64 alert_count = 0;
+            if (data != null && has (data, "alerts")) {
                 var alerts = data.get_array_member ("alerts");
+                alert_count = alerts.get_length ();
                 for (uint i = 0; i < alerts.get_length (); i++) {
-                    var row = new Gtk.Label (alerts.get_string_element (i)) { xalign = 0, wrap = true };
-                    row.add_css_class ("alert-row");
-                    if (alerts.get_string_element (i).contains ("critical")) row.add_css_class ("bad");
+                    string text_i = alerts.get_string_element (i);
+                    bool critical = text_i.down ().contains ("critical");
+                    var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+                        margin_start = 12, margin_end = 12, margin_top = 3, margin_bottom = 3
+                    };
+                    var icon = new Gtk.Image.from_icon_name (critical ? "dialog-warning-symbolic" : "dialog-information-symbolic") {
+                        valign = Gtk.Align.START
+                    };
+                    icon.add_css_class (critical ? Granite.CssClass.WARNING : Granite.CssClass.DIM);
+                    row.append (icon);
+                    row.append (new Gtk.Label (text_i) { xalign = 0, wrap = true, hexpand = true });
                     alert_box.append (row);
                 }
             }
+            alert_box.visible = alert_count > 0;
 
-            string last = data.has_member ("last_scan") && !data.get_null_member ("last_scan") ? data.get_string_member ("last_scan") : "";
-            string customer = data.has_member ("last_customer") && !data.get_null_member ("last_customer") ? data.get_string_member ("last_customer") : "";
-            last_scan_label.visible = !scanning;
-            last_scan_label.label = last == "" ? "No saved scans yet" : "Last scan %s%s".printf (relative (last), customer != "" ? " · " + customer : "");
-            monitor_label.visible = data.has_member ("monitor") && !data.get_null_member ("monitor");
-            if (monitor_label.visible) monitor_label.label = "Auto-monitor: " + data.get_string_member ("monitor");
+            // Summary: devices, network and last scan, as plain sentences.
+            string devices = "";
+            string network = "";
+            string last = "";
+            if (data != null && !offline) {
+                if (has (data, "hosts")) {
+                    int64 hosts = data.get_int_member ("hosts");
+                    devices = ngettext ("%d device", "%d devices", (ulong) hosts).printf ((int) hosts);
+                    if (has (data, "changes") && data.get_int_member ("changes") > 0) {
+                        int64 changes = data.get_int_member ("changes");
+                        devices += " · " + ngettext ("%d change", "%d changes", (ulong) changes).printf ((int) changes);
+                    }
+                }
+                if (has (data, "network")) {
+                    var net = data.get_object_member ("network");
+                    string where = str (net, "ssid") != "" ? str (net, "ssid") : str (net, "interface");
+                    string addr = str (net, "address");
+                    network = where == "" ? _("Not connected") : (addr != "" ? "%s · %s".printf (where, addr) : where);
+                }
+                if (!scanning) {
+                    string when = str (data, "last_scan");
+                    string customer = str (data, "last_customer");
+                    if (when == "") last = _("No scans yet");
+                    else if (customer != "") last = _("Last scan %s · %s").printf (relative (when), customer);
+                    else last = _("Last scan %s").printf (relative (when));
+                    if (str (data, "monitor") != "") last += " · " + _("next at %s").printf (str (data, "monitor"));
+                }
+            }
+            set_info (devices_label, devices);
+            set_info (network_label, network);
+            set_info (last_scan_label, last);
+            network_label.add_css_class (Granite.CssClass.NUMERIC);
+            summary_separator.visible = devices != "" || network != "" || last != "";
 
-            int64 alert_count = data.has_member ("alerts") ? (int64) data.get_array_member ("alerts").get_length () : 0;
+            // Panel icon: shape carries the state; the dock carries progress and the alert count.
+            string icon = scanning ? ICON_SCANNING : (state == "attention" ? ICON_ATTENTION : ICON_IDLE);
+            update_panel (icon, offline, _("Network Scanner"), status);
             update_launcher (scanning, progress.visible ? progress.fraction : 0.0, alert_count);
-            panel.set_tooltip_text ("Network Scanner · " + label + (hosts_known ? " · %s hosts".printf (hosts_value.label) : ""));
         }
 
         public override Gtk.Widget get_display_widget () {
-            return panel;
+            return panel_icon;
         }
 
         public override Gtk.Widget? get_widget () {
@@ -421,10 +351,14 @@ namespace MSeries {
         }
 
         public override void opened () {
+            is_open = true;
             refresh ();
+            schedule_poll ();
         }
 
         public override void closed () {
+            is_open = false;
+            schedule_poll ();
         }
     }
 }

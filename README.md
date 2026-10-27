@@ -12,12 +12,13 @@ a Granite / GTK 4 window, a Wingpanel indicator and a per-user scanner service.
 <p>
   <img src="docs/screenshots/indicator-scanning.png" alt="Wingpanel indicator during a scan" width="32%">
   <img src="docs/screenshots/indicator-attention.png" alt="Wingpanel indicator needing attention" width="32%">
+  <img src="docs/screenshots/indicator-offline.png" alt="Wingpanel indicator with the service stopped" width="32%">
 </p>
 
 | Piece | What it is |
 |---|---|
 | `src/` | **Network Scanner** (`io.github.techmore.NmapUI`), a Vala app. Pantheon headerbar with segmented tabs, a live status chip, system light/dark, scan-finished notifications, report download toasts, and a Granite placeholder that starts the service when it is down. |
-| `indicator/` | Wingpanel indicator: scan state and progress, network facts, hosts/changes/critical, alerts, and the device list from the latest scan. |
+| `indicator/` | Wingpanel indicator: one symbolic panel icon whose shape follows the scanner state, and a plain elementary menu with the state, scan progress, alerts, a short summary, Start Scanner Service (when stopped) and Open Network Scanner. |
 | `helper/nmapui-summary` | One-shot JSON summary of the local scanner (loopback API only) used by the indicator. |
 | `data/` | Desktop entry, AppStream metadata, icons and the `nmapui.service` user-unit template. |
 | `scripts/` | `install.sh` (build + install the app and indicator), `install-backend.sh` (clone the engine, create its venv, install the service), `snapshot.sh` (headless renders for review). |
@@ -91,7 +92,7 @@ meson install -C build
 
 ```bash
 python3 -m pytest -q tests                      # summary helper
-indicator/probe/run-probe.sh build/indicator out # indicator renders for four states (Xvfb)
+indicator/probe/run-probe.sh build/indicator out # indicator renders, four states × light/dark (Xvfb)
 scripts/snapshot.sh build out                    # window renders, light and dark (Xvfb)
 desktop-file-validate build/data/io.github.techmore.NmapUI.desktop
 appstreamcli validate --no-net build/data/io.github.techmore.NmapUI.metainfo.xml
