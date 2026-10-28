@@ -95,6 +95,8 @@ namespace NmapUI {
             var settings = web.get_settings ();
             settings.enable_developer_extras = Environment.get_variable ("NMAPUI_DEVTOOLS") != null;
             settings.enable_back_forward_navigation_gestures = false;
+            // Ask the scanner for its elementary theme layer; plain browsers get the olive web theme.
+            settings.set_user_agent_with_application_details ("NmapUI-elementary", VERSION);
             web.get_user_content_manager ().add_style_sheet (new WebKit.UserStyleSheet (
                 PAGE_CSS, WebKit.UserContentInjectedFrames.TOP_FRAME, WebKit.UserStyleLevel.USER, null, null));
             web.hexpand = true;
