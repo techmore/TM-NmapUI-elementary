@@ -78,4 +78,3 @@ def test_devices_are_sorted_numerically_and_fill_host_count():
     out = summary.summarize(HEALTH, {"active_jobs": []}, {"history": []}, None, live)
     assert [d["ip"] for d in out["devices"]] == ["10.0.0.3", "10.0.0.20"]
     assert out["hosts"] == 2 and out["devices"][1]["open_ports"] == 1
-
