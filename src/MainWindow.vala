@@ -541,13 +541,26 @@ namespace NmapUI {
                 download.set_destination (path);
                 return true;
             });
-            download.finished.connect (() => {
-                last_download_path = download.destination;
-                toast.title = _("Saved %s to Downloads").printf (Path.get_basename (download.destination ?? ""));
+            // WebKit emits "finished" after "failed" too, so only a download that never failed is saved.
+            bool failed = false;
+            download.failed.connect ((error) => {
+                failed = true;
+                if (error.matches (WebKit.DownloadError.quark (), WebKit.DownloadError.CANCELLED_BY_USER)) {
+                    return;
+                }
+                // Nothing was saved, so there is nothing to open.
+                last_download_path = null;
+                toast.set_default_action (null);
+                toast.title = _("Download failed: %s").printf (error.message);
                 toast.send_notification ();
             });
-            download.failed.connect ((error) => {
-                toast.title = _("Download failed: %s").printf (error.message);
+            download.finished.connect (() => {
+                if (failed) {
+                    return;
+                }
+                last_download_path = download.destination;
+                toast.set_default_action (_("Open"));
+                toast.title = _("Saved %s to Downloads").printf (Path.get_basename (download.destination ?? ""));
                 toast.send_notification ();
             });
         }
