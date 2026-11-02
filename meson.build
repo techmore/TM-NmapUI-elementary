@@ -16,6 +16,7 @@ datadir = prefix / get_option('datadir')
 conf = configuration_data()
 conf.set_quoted('GETTEXT_PACKAGE', app_id)
 conf.set_quoted('VERSION', meson.project_version())
+conf.set_quoted('BINDIR', bindir)
 configure_file(output: 'config.h', configuration: conf)
 add_project_arguments('-include', 'config.h', language: 'c')
 add_project_arguments(
