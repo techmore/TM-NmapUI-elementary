@@ -27,5 +27,5 @@ install_data(
   install_dir: datadir / 'icons' / 'hicolor' / 'symbolic' / 'apps',
 )
 
-# systemd user unit template consumed by scripts/install-backend.sh.
-install_data('nmapui.service.in', install_dir: datadir / app_id)
+# systemd user unit template and pinned engine commit, consumed by scripts/install-backend.sh.
+install_data('nmapui.service.in', 'engine-revision', install_dir: datadir / app_id)
