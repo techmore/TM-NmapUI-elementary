@@ -47,14 +47,14 @@ executable(
   install: true,
 )
 
+# One-shot JSON summary of the local scanner, shared by the Wingpanel indicator.
+install_data('helper/nmapui-summary', install_dir: bindir, install_mode: 'rwxr-xr-x')
+
 test('navigation-policy', executable(
   'test-navigation-policy',
   'src/NavigationPolicy.vala', 'tests/test_navigation_policy.vala',
   dependencies: [dependency('glib-2.0', version: '>= 2.74'), dependency('gobject-2.0')],
 ))
-
-# One-shot JSON summary of the local scanner, shared by the Wingpanel indicator.
-install_data('helper/nmapui-summary', install_dir: bindir, install_mode: 'rwxr-xr-x')
 
 subdir('data')
 if get_option('indicator')
