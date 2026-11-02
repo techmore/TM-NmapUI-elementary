@@ -13,10 +13,10 @@
       and produces printable PDF reports.
     </p>
     <p>
-      The scanner engine runs on this computer as a per-user service bound to 127.0.0.1. This app
-      gives it a native window with segmented tabs, a live scanning status chip, system light and
-      dark mode, desktop notifications when a scan finishes, and a Wingpanel indicator with a
-      scan summary and device list.
+      The scanner engine runs on this computer as a user service bound to 127.0.0.1. This app
+      gives it a native window with segmented tabs, scan progress in the header while a scan runs,
+      system light and dark mode, desktop notifications when a scan finishes, and a Wingpanel
+      indicator with the scanner's state, scan progress, alerts and a short summary.
     </p>
   </description>
   <content_rating type="oars-1.1" />

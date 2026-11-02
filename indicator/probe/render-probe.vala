@@ -13,7 +13,12 @@ int main (string[] args) {
     var icons = Environment.get_variable ("NMAPUI_ICONS");
     if (icons != null) Gtk.IconTheme.get_for_display (Gdk.Display.get_default ()).add_search_path (icons);
     var dark = Environment.get_variable ("NMAPUI_PROBE_DARK") == "1";
-    Gtk.Settings.get_default ().gtk_application_prefer_dark_theme = dark;
+    unowned var style = Granite.StyleManager.get_default ();
+    if (dark) {
+        style.color_scheme = DARK;
+    } else {
+        style.color_scheme = LIGHT;
+    }
     var indicator = new MSeries.NmapUIIndicator ();
     // Panel strip, then the indicator body inside a real popover so the stylesheet's popover rules apply.
     var bar = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0) { height_request = 28, margin_start = 8, margin_end = 8 };
