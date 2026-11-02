@@ -419,18 +419,93 @@ namespace NmapUI {
             return true;
         }
 
+        private enum Route {
+            /** Render in this view: the engine's own origin, or an inert blank or inline page. */
+            STAY,
+            /** Open in the user's browser and keep this view where it is. */
+            BROWSER,
+            /** Refuse: not the engine, and not something the user asked to open. */
+            BLOCK
+        }
+
+        private Route route (WebKit.NavigationAction action) {
+            var origin = ((Application) application).origin;
+            var uri = action.get_request ().get_uri () ?? "";
+            if (NavigationPolicy.local_uri (uri, origin) || uri == "about:blank" || uri == "about:srcdoc"
+                || uri.has_prefix ("data:")) {
+                return Route.STAY;
+            }
+            // Google Drive sign-in finishes in the user's browser; the engine keeps the OAuth state.
+            if (NavigationPolicy.google_auth_uri (uri, origin)) {
+                return Route.BROWSER;
+            }
+            // Links the user clicked (GitHub, docs) open in their browser. Redirects, form posts and
+            // script navigations to other origins never render inside the app.
+            bool asked = action.get_navigation_type () == WebKit.NavigationType.LINK_CLICKED || action.is_user_gesture ();
+            return asked && NavigationPolicy.web_uri (uri) ? Route.BROWSER : Route.BLOCK;
+        }
+
+        private void open_in_browser (string uri) {
+            new Gtk.UriLauncher (uri).launch.begin (this, null);
+        }
+
+        // WebKitGTK's Vala binding declares a non-null return, but WebKit takes NULL to refuse a popup.
         private Gtk.Widget on_create_popup (WebKit.NavigationAction action) {
-            // Google Drive sign-in opens a popup; give it a plain window of its own.
+            var uri = action.get_request ().get_uri () ?? "";
+            switch (route (action)) {
+                case Route.BROWSER:
+                    open_in_browser (uri);
+                    return (Gtk.Widget) null;
+                case Route.BLOCK:
+                    return (Gtk.Widget) null;
+                default:
+                    break;
+            }
+            // Engine pages (and the blank window the engine opens before it knows the sign-in URL)
+            // get a plain window that follows the same policy. It only appears once it shows an
+            // engine page, so a blank window that hands off to the browser never flashes up.
+            var origin = ((Application) application).origin;
             var view = (WebKit.WebView) Object.new (typeof (WebKit.WebView), "related-view", web);
             var popup = new Gtk.Window () {
-                title = _("Sign In"),
+                title = _("Network Scanner"),
                 transient_for = this,
                 default_width = 720,
                 default_height = 760,
                 child = view
             };
+            view.decide_policy.connect ((decision, type) => {
+                if (type != WebKit.PolicyDecisionType.NAVIGATION_ACTION) {
+                    return false;
+                }
+                var next = ((WebKit.NavigationPolicyDecision) decision).get_navigation_action ();
+                var next_route = route (next);
+                if (next_route == Route.STAY) {
+                    return false;
+                }
+                decision.ignore ();
+                if (next_route == Route.BROWSER) {
+                    open_in_browser (next.get_request ().get_uri ());
+                }
+                if (!popup.visible) {
+                    // Not from inside the view's own signal.
+                    Idle.add (() => {
+                        popup.destroy ();
+                        return Source.REMOVE;
+                    });
+                }
+                return true;
+            });
+            view.load_changed.connect ((event) => {
+                if (event == WebKit.LoadEvent.COMMITTED && NavigationPolicy.local_uri (view.uri, origin)) {
+                    popup.present ();
+                }
+            });
+            view.ready_to_show.connect (() => {
+                if (NavigationPolicy.local_uri (view.uri, origin)) {
+                    popup.present ();
+                }
+            });
             view.close.connect (popup.destroy);
-            view.ready_to_show.connect (popup.present);
             return view;
         }
 
@@ -438,19 +513,16 @@ namespace NmapUI {
             if (type != WebKit.PolicyDecisionType.NAVIGATION_ACTION) {
                 return false;
             }
-            var navigation = (WebKit.NavigationPolicyDecision) decision;
-            var request = navigation.get_navigation_action ().get_request ();
-            var uri = request.get_uri ();
-            // Keep the scanner inside the window; anything else (GitHub, docs) goes to the user's browser.
-            if (uri.has_prefix (((Application) application).origin) || uri.has_prefix ("about:") || uri.has_prefix ("data:")) {
+            var action = ((WebKit.NavigationPolicyDecision) decision).get_navigation_action ();
+            var next = route (action);
+            if (next == Route.STAY) {
                 return false;
             }
-            if (navigation.get_navigation_action ().get_navigation_type () == WebKit.NavigationType.LINK_CLICKED) {
-                decision.ignore ();
-                new Gtk.UriLauncher (uri).launch.begin (this, null);
-                return true;
+            decision.ignore ();
+            if (next == Route.BROWSER) {
+                open_in_browser (action.get_request ().get_uri ());
             }
-            return false;
+            return true;
         }
 
         private void on_download_started (WebKit.Download download) {
