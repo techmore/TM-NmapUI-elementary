@@ -68,20 +68,20 @@ namespace NmapUI {
             });
         }
 
+        /* Granite.init () already follows the system light/dark preference (Granite.StyleManager,
+         * Granite 7.7+), and the scanner page follows GTK. NMAPUI_FORCE_DARK=1|0 overrides it for
+         * screenshots (scripts/snapshot.sh). */
         private void follow_system_color_scheme () {
-            var granite_settings = Granite.Settings.get_default ();
-            var gtk_settings = Gtk.Settings.get_default ();
             var forced = Environment.get_variable ("NMAPUI_FORCE_DARK");
-            if (forced != null) {
-                gtk_settings.gtk_application_prefer_dark_theme = forced == "1";
+            if (forced == null) {
                 return;
             }
-            gtk_settings.gtk_application_prefer_dark_theme =
-                granite_settings.prefers_color_scheme == Granite.Settings.ColorScheme.DARK;
-            granite_settings.notify["prefers-color-scheme"].connect (() => {
-                gtk_settings.gtk_application_prefer_dark_theme =
-                    granite_settings.prefers_color_scheme == Granite.Settings.ColorScheme.DARK;
-            });
+            unowned var style = Granite.StyleManager.get_default ();
+            if (forced == "1") {
+                style.color_scheme = DARK;
+            } else {
+                style.color_scheme = LIGHT;
+            }
         }
 
         private void install_actions () {
