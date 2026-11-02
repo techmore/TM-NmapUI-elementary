@@ -28,8 +28,18 @@ def test_cancelling_scan_is_stopping():
     assert summary.summarize(HEALTH, runtime, None, None)["state"] == "stopping"
 
 
+def test_elapsed_handles_naive_local_and_offset_start_times():
+    import datetime
+    for started in (datetime.datetime.now() - datetime.timedelta(minutes=5),
+                    datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)):
+        runtime = {"active_jobs": [{"job_type": "scan", "status": "running", "started_at": started.isoformat(),
+                                    "details": {}}]}
+        out = summary.summarize(HEALTH, runtime, None, None)
+        assert 290 <= out["scan"]["elapsed_seconds"] <= 310
+
+
 def test_changes_and_critical_cves_raise_attention():
-    history = {"history": [{"timestamp": "2026-10-19T10:00:00Z", "customer_name": "Penn", "host_count": 24,
+    history = {"history": [{"timestamp": "2026-10-19T10:00:00", "customer_name": "Penn", "host_count": 24,
                             "critical_cves": 2, "diff_summary": {"has_changes": True}}]}
     out = summary.summarize(HEALTH, {"active_jobs": []}, history, {"enabled": True, "next_run": "01:00"})
     assert out["state"] == "attention" and out["hosts"] == 24 and out["critical"] == 2

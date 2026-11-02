@@ -212,14 +212,15 @@ namespace MSeries {
             }
         }
 
+        // The engine's timestamps are local time unless they carry an offset (see TimeFormat).
         private static string relative (string iso) {
-            var then = new DateTime.from_iso8601 (iso, new TimeZone.utc ());
-            if (then == null) return iso;
-            var seconds = new DateTime.now_utc ().difference (then) / TimeSpan.SECOND;
-            if (seconds < 90) return _("just now");
-            if (seconds < 5400) return ngettext ("%d minute ago", "%d minutes ago", (ulong) (seconds / 60)).printf ((int) (seconds / 60));
-            if (seconds < 129600) return ngettext ("%d hour ago", "%d hours ago", (ulong) (seconds / 3600)).printf ((int) (seconds / 3600));
-            return ngettext ("%d day ago", "%d days ago", (ulong) (seconds / 86400)).printf ((int) (seconds / 86400));
+            var local = new TimeZone.local ();
+            return TimeFormat.relative (iso, new DateTime.now (local), local);
+        }
+
+        private static string clock (string iso) {
+            var local = new TimeZone.local ();
+            return TimeFormat.clock (iso, new DateTime.now (local), local);
         }
 
         private static string duration (int64 sec) {
@@ -335,7 +336,7 @@ namespace MSeries {
                     if (when == "") last = _("No scans yet");
                     else if (customer != "") last = _("Last scan %s · %s").printf (relative (when), customer);
                     else last = _("Last scan %s").printf (relative (when));
-                    if (str (data, "monitor") != "") last += " · " + _("next at %s").printf (str (data, "monitor"));
+                    if (str (data, "monitor") != "") last += " · " + _("next at %s").printf (clock (str (data, "monitor")));
                 }
             }
             set_info (devices_label, devices);
