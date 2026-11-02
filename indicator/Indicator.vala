@@ -1,7 +1,7 @@
 /* Network Scanner indicator for Pantheon's Wingpanel.
  * The panel shows one symbolic icon whose shape follows the scanner state; the popover is a plain
  * elementary menu: a header with the state, scan progress when scanning, any alerts, a short
- * summary and menu items. Data comes from ~/.local/bin/nmapui-summary (loopback scanner API only). */
+ * summary and menu items. Data comes from the nmapui-summary helper (loopback scanner API only). */
 using GLib;
 using Gtk;
 using Json;
@@ -28,7 +28,8 @@ namespace MSeries {
         private Gtk.Label network_label;
         private Gtk.Label last_scan_label;
         private Gtk.Button start_service_button;
-        private string helper;
+        private const string HELPER = "nmapui-summary";
+        private string unit;
         private bool in_flight = false;
         private bool is_open = false;
         private uint poll_source = 0;
@@ -40,7 +41,7 @@ namespace MSeries {
         }
 
         construct {
-            helper = GLib.Path.build_filename (Environment.get_home_dir (), ".local", "bin", "nmapui-summary");
+            unit = Environment.get_variable ("NMAPUI_SERVICE") ?? "nmapui.service";
 
             panel_icon = new Gtk.Image.from_icon_name (ICON_IDLE);
             update_panel (ICON_IDLE, false, _("Network Scanner"), _("Loading…"));
@@ -175,7 +176,7 @@ namespace MSeries {
             start_service_button.sensitive = false;
             header.secondary_text = _("Starting…");
             try {
-                var process = new Subprocess (SubprocessFlags.NONE, "systemctl", "--user", "start", "nmapui.service");
+                var process = new Subprocess (SubprocessFlags.NONE, "systemctl", "--user", "start", unit);
                 process.wait_async.begin (null, () => {
                     start_service_button.sensitive = true;
                     last_json = "";
@@ -187,8 +188,24 @@ namespace MSeries {
             }
         }
 
+        /* The helper is installed next to the app. The app may be installed for the user (~/.local)
+         * while this module is installed system-wide, so after the build-time location also try
+         * ~/.local/bin and $PATH. Looked up on every refresh so a later install is picked up. */
+        private static string? find_helper () {
+            foreach (var dir in new string[] { NmapUI.BINDIR, GLib.Path.build_filename (Environment.get_home_dir (), ".local", "bin") }) {
+                var path = GLib.Path.build_filename (dir, HELPER);
+                if (FileUtils.test (path, FileTest.IS_EXECUTABLE) && !FileUtils.test (path, FileTest.IS_DIR)) return path;
+            }
+            return Environment.find_program_in_path (HELPER);
+        }
+
         private void refresh () {
             if (in_flight) return;
+            var helper = find_helper ();
+            if (helper == null) {
+                apply ("");
+                return;
+            }
             in_flight = true;
             try {
                 var process = new Subprocess (SubprocessFlags.STDOUT_PIPE | SubprocessFlags.STDERR_SILENCE, helper);

@@ -5,6 +5,7 @@ indicator_deps = [
   libwingpanel_dep,
   dependency('granite-7', version: '>= 7.7.0'),
   dependency('json-glib-1.0'),
+  config_vapi,
 ]
 
 shared_module(
