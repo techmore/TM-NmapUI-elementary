@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual runs, so branches can be built before a pull request exists.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -42,6 +44,8 @@ jobs:
         run: |
           desktop-file-validate build/data/io.github.techmore.NmapUI.desktop
           appstreamcli validate --no-net build/data/io.github.techmore.NmapUI.metainfo.xml
+      - name: Unit tests (Vala)
+        run: meson test -C build --print-errorlogs
       - name: Summary helper unit tests
         run: python3 -m pytest -q tests
       - name: Render the indicator for every state
