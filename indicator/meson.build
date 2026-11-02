@@ -7,11 +7,14 @@ indicator_deps = [
   dependency('json-glib-1.0'),
   config_vapi,
 ]
+# config.h (BINDIR) is generated in the top-level build directory.
+indicator_inc = include_directories('..')
 
 shared_module(
   'nmapui',
   'Indicator.vala',
   dependencies: indicator_deps,
+  include_directories: indicator_inc,
   install: true,
   install_dir: indicators_dir,
 )
@@ -28,5 +31,6 @@ executable(
   'render-probe',
   'Indicator.vala', 'probe/render-probe.vala',
   dependencies: indicator_deps,
+  include_directories: indicator_inc,
   install: false,
 )
