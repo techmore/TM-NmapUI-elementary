@@ -9,7 +9,7 @@ indicator_deps = [
 
 shared_module(
   'nmapui',
-  'Indicator.vala',
+  'Indicator.vala', 'TimeFormat.vala',
   dependencies: indicator_deps,
   install: true,
   install_dir: indicators_dir,
@@ -25,7 +25,7 @@ install_data(
 # Headless render probe (not installed): see probe/run-probe.sh.
 executable(
   'render-probe',
-  'Indicator.vala', 'probe/render-probe.vala',
+  'Indicator.vala', 'TimeFormat.vala', 'probe/render-probe.vala',
   dependencies: indicator_deps,
   install: false,
 )

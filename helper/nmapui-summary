@@ -89,8 +89,10 @@ def summarize(health, runtime, history, auto, live=None):
                        "index": int(step[1]) if step else None, "total": int(step[2]) if step else None,
                        "current": step[3] if step and step[3] else None}
         try:
+            # The engine writes naive local times; one with an offset is compared in its own zone.
             started = datetime.datetime.fromisoformat(str(scan.get("started_at")))
-            out["scan"]["elapsed_seconds"] = max(0, int((datetime.datetime.now() - started).total_seconds()))
+            now = datetime.datetime.now(started.tzinfo) if started.tzinfo else datetime.datetime.now()
+            out["scan"]["elapsed_seconds"] = max(0, int((now - started).total_seconds()))
         except ValueError:
             out["scan"]["elapsed_seconds"] = None
         if out["hosts"] is None and out["scan"]["total"]:
