@@ -42,9 +42,16 @@ executable(
   'src/Application.vala',
   'src/Backend.vala',
   'src/MainWindow.vala',
+  'src/NavigationPolicy.vala',
   dependencies: app_deps,
   install: true,
 )
+
+test('navigation-policy', executable(
+  'test-navigation-policy',
+  'src/NavigationPolicy.vala', 'tests/test_navigation_policy.vala',
+  dependencies: [dependency('glib-2.0', version: '>= 2.74'), dependency('gobject-2.0')],
+))
 
 # One-shot JSON summary of the local scanner, shared by the Wingpanel indicator.
 install_data('helper/nmapui-summary', install_dir: bindir, install_mode: 'rwxr-xr-x')
