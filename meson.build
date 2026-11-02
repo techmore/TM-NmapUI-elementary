@@ -40,18 +40,12 @@ app_deps = [
 executable(
   app_id,
   'src/Application.vala',
+  'src/PagePresentation.vala',
   'src/Backend.vala',
   'src/MainWindow.vala',
-  'src/PagePresentation.vala',
   dependencies: app_deps,
   install: true,
 )
-
-test('page-presentation', executable(
-  'test-page-presentation',
-  'src/PagePresentation.vala', 'tests/test_page_presentation.vala',
-  dependencies: [dependency('glib-2.0'), dependency('gobject-2.0')],
-))
 
 # One-shot JSON summary of the local scanner, shared by the Wingpanel indicator.
 install_data('helper/nmapui-summary', install_dir: bindir, install_mode: 'rwxr-xr-x')
@@ -60,6 +54,12 @@ subdir('data')
 if get_option('indicator')
   subdir('indicator')
 endif
+
+test('page-presentation', executable(
+  'test-page-presentation',
+  'src/PagePresentation.vala', 'tests/test_page_presentation.vala',
+  dependencies: [dependency('glib-2.0'), dependency('gobject-2.0')],
+))
 
 gnome.post_install(
   gtk_update_icon_cache: true,
