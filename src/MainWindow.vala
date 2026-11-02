@@ -31,6 +31,7 @@ namespace NmapUI {
         private Gtk.Button status_chip;
         private Gtk.Label status_label;
         private Gtk.Spinner status_spinner;
+        private Gtk.Image status_warning;
         private Gtk.Button reload_button;
         private Gtk.ToggleButton[] tab_buttons = {};
         private Granite.Placeholder offline_page;
@@ -174,12 +175,15 @@ namespace NmapUI {
             };
             header.pack_end (menu_button);
 
-            // Activity: a flat button that appears only while a scan runs or the service starts.
+            // Activity: a flat button that appears only while a scan runs or the service starts,
+            // or when the scanner's activity can't be read (its tooltip says why).
             var chip_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
             status_spinner = new Gtk.Spinner ();
+            status_warning = new Gtk.Image.from_icon_name ("dialog-warning-symbolic") { visible = false };
             status_label = new Gtk.Label ("");
             status_label.add_css_class (Granite.CssClass.NUMERIC);
             chip_box.append (status_spinner);
+            chip_box.append (status_warning);
             chip_box.append (status_label);
             status_chip = new Gtk.Button () { child = chip_box, valign = Gtk.Align.CENTER, visible = false };
             status_chip.add_css_class ("flat");
@@ -316,15 +320,20 @@ namespace NmapUI {
         // --- Backend state --------------------------------------------------------------------
 
         private void on_backend_changed () {
-            bool busy = backend.state == ServiceState.SCANNING
-                || backend.state == ServiceState.STOPPING || backend.state == ServiceState.STARTING;
-            status_chip.visible = busy;
-            status_spinner.spinning = busy;
+            bool busy = backend.state.has_scan () || backend.state == ServiceState.STARTING;
+            bool unavailable = backend.state == ServiceState.UNAVAILABLE;
+            // Shown while something is happening, or when the scanner's activity can't be read.
+            status_chip.visible = busy || unavailable;
+            status_spinner.visible = !unavailable;
+            status_spinner.spinning = busy && backend.state != ServiceState.PAUSED;
+            status_warning.visible = unavailable;
 
             string text = backend.state.label ();
             string tooltip = text;
             switch (backend.state) {
                 case ServiceState.SCANNING:
+                case ServiceState.PAUSING:
+                case ServiceState.PAUSED:
                 case ServiceState.STOPPING:
                     if (backend.progress >= 0) {
                         text = "%s · %d%%".printf (text, backend.progress);
@@ -339,12 +348,16 @@ namespace NmapUI {
                         ? _("Scanner service %s is running on %s").printf (backend.version, ((Application) application).origin)
                         : text;
                     break;
+                case ServiceState.UNAVAILABLE:
+                    tooltip = backend.reason;
+                    break;
                 default:
                     break;
             }
             status_label.label = text;
             status_chip.tooltip_text = tooltip;
-            status_chip.update_property (Gtk.AccessibleProperty.LABEL, text, -1);
+            status_chip.update_property (Gtk.AccessibleProperty.LABEL, text,
+                                         Gtk.AccessibleProperty.DESCRIPTION, tooltip, -1);
 
             if (backend.state == ServiceState.STARTING) {
                 stack.visible_child_name = "starting";

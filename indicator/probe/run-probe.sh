@@ -4,7 +4,7 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 build=$1; out=$2; mkdir -p "$out"
 for theme in light dark; do
-for state in scanning attention idle offline; do
+for state in scanning attention idle unavailable offline; do
   home=$(mktemp -d); mkdir -p "$home/.local/bin"
   printf '#!/bin/sh\ncat %s\n' "$here/fixtures/$state.json" > "$home/.local/bin/nmapui-summary"
   chmod +x "$home/.local/bin/nmapui-summary"

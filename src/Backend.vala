@@ -4,15 +4,22 @@ namespace NmapUI {
     public enum ServiceState {
         OFFLINE,
         STARTING,
+        /* The service answers, but its activity can't be read (refused or malformed status). */
+        UNAVAILABLE,
         IDLE,
         SCANNING,
+        PAUSING,
+        PAUSED,
         STOPPING;
 
         public string label () {
             switch (this) {
                 case STARTING: return _("Starting…");
+                case UNAVAILABLE: return _("Status unavailable");
                 case IDLE: return _("Ready");
                 case SCANNING: return _("Scanning");
+                case PAUSING: return _("Pausing scan…");
+                case PAUSED: return _("Scan paused");
                 case STOPPING: return _("Stopping scan");
                 default: return _("Not running");
             }
@@ -21,16 +28,25 @@ namespace NmapUI {
         public string css () {
             switch (this) {
                 case STARTING: return "starting";
+                case UNAVAILABLE: return "unavailable";
                 case IDLE: return "idle";
                 case SCANNING: return "scanning";
+                case PAUSING: return "scanning";
+                case PAUSED: return "scanning";
                 case STOPPING: return "scanning";
                 default: return "offline";
             }
+        }
+
+        /** A scan is running, paused or winding down. */
+        public bool has_scan () {
+            return this == SCANNING || this == PAUSING || this == PAUSED || this == STOPPING;
         }
     }
 
     public class Backend : Object {
         public const uint POLL_SECONDS = 4;
+        private const size_t MAX_BODY_BYTES = 2 * 1024 * 1024;
 
         public string origin { get; construct; }
         public string unit { get; construct; }
@@ -44,6 +60,8 @@ namespace NmapUI {
         /** Hosts in the running scan, -1 when unknown. */
         public int hosts { get; private set; default = -1; }
         public string target { get; private set; default = ""; }
+        /** Why the scanner's activity can't be read, while the state is UNAVAILABLE. */
+        public string reason { get; private set; default = ""; }
 
         public signal void changed ();
         public signal void came_online ();
@@ -81,13 +99,19 @@ namespace NmapUI {
             }
             in_flight = true;
             var previous = state;
-            var health = yield fetch ("/api/health");
+            uint status;
+            var health = yield fetch ("/api/health", out status);
             if (health == null) {
                 apply_offline ();
             } else {
                 start_requested = false;
-                version = health.get_string_member_with_default ("app_version", "");
-                apply_runtime (yield fetch ("/api/runtime/status"));
+                version = RuntimeSchema.text (health, "app_version");
+                var runtime = yield fetch ("/api/runtime/status", out status);
+                if (RuntimeSchema.valid (runtime)) {
+                    apply_runtime (runtime);
+                } else {
+                    apply_unavailable (status);
+                }
             }
             in_flight = false;
             changed ();
@@ -96,8 +120,8 @@ namespace NmapUI {
             if (was_down && is_up) {
                 came_online ();
             }
-            bool was_scanning = previous == ServiceState.SCANNING || previous == ServiceState.STOPPING;
-            if (was_scanning && state == ServiceState.IDLE) {
+            // Only a readable idle snapshot after a scan means it ended; an unreadable one proves nothing.
+            if (previous.has_scan () && state == ServiceState.IDLE) {
                 scan_finished (last_scan_hosts, last_scan_target);
             }
         }
@@ -151,42 +175,65 @@ namespace NmapUI {
 
         private void apply_offline () {
             state = start_requested ? ServiceState.STARTING : ServiceState.OFFLINE;
+            clear_scan ();
+        }
+
+        private void clear_scan () {
             message = "";
             progress = -1;
             hosts = -1;
             target = "";
+            reason = "";
         }
 
-        private void apply_runtime (Json.Object? runtime) {
+        /* The service is up but /api/runtime/status was refused or unreadable. Saying "Ready" here
+         * would hide a running scan, so say why the status is missing instead. */
+        private void apply_unavailable (uint status) {
+            state = ServiceState.UNAVAILABLE;
+            clear_scan ();
+            if (status == 401 || status == 403 || (status >= 300 && status < 400)) {
+                reason = _("The scanner refused this app’s status request (HTTP %u). Sign in to the scanner, or allow local access in its settings.").printf (status);
+            } else if (status == 503) {
+                reason = _("The scanner refuses status requests until its sign-in is set up securely (HTTP 503). Finish setting up sign-in in the scanner.");
+            } else if (status != 200 && status != 0) {
+                reason = _("The scanner answered the status request with HTTP %u.").printf (status);
+            } else {
+                reason = _("The scanner’s status reply couldn’t be read.");
+            }
+        }
+
+        /* `runtime` has passed RuntimeSchema.valid (). */
+        private void apply_runtime (Json.Object runtime) {
             Json.Object? scan = null;
-            if (runtime != null && runtime.has_member ("active_jobs")) {
-                var jobs = runtime.get_array_member ("active_jobs");
-                for (uint i = 0; i < jobs.get_length (); i++) {
-                    var job = jobs.get_object_element (i);
-                    if (job.get_string_member_with_default ("job_type", "") == "scan") {
-                        scan = job;
-                        break;
-                    }
+            var jobs = runtime.get_array_member ("active_jobs");
+            for (uint i = 0; i < jobs.get_length (); i++) {
+                var job = jobs.get_object_element (i);
+                if (RuntimeSchema.text (job, "job_type") == "scan") {
+                    scan = job;
+                    break;
                 }
             }
             if (scan == null) {
                 state = ServiceState.IDLE;
-                message = "";
-                progress = -1;
-                hosts = -1;
-                target = "";
+                clear_scan ();
                 return;
             }
-            state = scan.get_string_member_with_default ("status", "") == "cancelling"
-                ? ServiceState.STOPPING : ServiceState.SCANNING;
+            reason = "";
+            if (RuntimeSchema.text (scan, "status") == "cancelling") {
+                state = ServiceState.STOPPING;
+            } else if (RuntimeSchema.flag (scan, "paused")) {
+                state = ServiceState.PAUSED;
+            } else if (RuntimeSchema.flag (scan, "pause_requested")) {
+                state = ServiceState.PAUSING;
+            } else {
+                state = ServiceState.SCANNING;
+            }
             var details = scan.has_member ("details") && !scan.get_null_member ("details")
                 ? scan.get_object_member ("details") : new Json.Object ();
-            message = details.get_string_member_with_default ("message", "");
-            target = details.get_string_member_with_default ("target", "");
-            progress = details.has_member ("progress") && !details.get_null_member ("progress")
-                ? (int) details.get_int_member ("progress") : -1;
-            hosts = details.has_member ("host_count") && !details.get_null_member ("host_count")
-                ? (int) details.get_int_member ("host_count") : -1;
+            message = RuntimeSchema.text (details, "message");
+            target = RuntimeSchema.text (details, "target");
+            progress = (int) RuntimeSchema.integer (details, "progress", -1).clamp (-1, 100);
+            hosts = (int) RuntimeSchema.integer (details, "host_count", -1);
             if (hosts < 0) {
                 // "Service scan 2/30: 10.0.0.8" carries the host total.
                 try {
@@ -206,15 +253,35 @@ namespace NmapUI {
             }
         }
 
-        private async Json.Object? fetch (string path) {
+        /* GET a JSON object from the engine. `status` is the HTTP status, or 0 when nothing answered.
+         * Redirects are not followed (a login redirect is a refusal) and bodies over 2 MiB are dropped. */
+        private async Json.Object? fetch (string path, out uint status) {
+            status = 0;
             try {
                 var request = new Soup.Message ("GET", origin + path);
-                var bytes = yield session.send_and_read_async (request, Priority.DEFAULT, null);
-                if (request.status_code != 200) {
+                request.set_flags (Soup.MessageFlags.NO_REDIRECT);
+                request.request_headers.replace ("Accept", "application/json");
+                var stream = yield session.send_async (request, Priority.DEFAULT, null);
+                status = request.status_code;
+                if (status != 200) {
+                    yield stream.close_async (Priority.DEFAULT, null);
                     return null;
                 }
+                var body = new ByteArray ();
+                while (true) {
+                    var chunk = yield stream.read_bytes_async (65536, Priority.DEFAULT, null);
+                    if (chunk.get_size () == 0) {
+                        break;
+                    }
+                    if (body.len + chunk.get_size () > MAX_BODY_BYTES) {
+                        yield stream.close_async (Priority.DEFAULT, null);
+                        return null;
+                    }
+                    body.append (chunk.get_data ());
+                }
+                yield stream.close_async (Priority.DEFAULT, null);
                 var parser = new Json.Parser ();
-                parser.load_from_data ((string) bytes.get_data (), (ssize_t) bytes.get_size ());
+                parser.load_from_data ((string) body.data, (ssize_t) body.len);
                 var root = parser.get_root ();
                 if (root == null || root.get_node_type () != Json.NodeType.OBJECT) {
                     return null;

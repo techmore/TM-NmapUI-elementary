@@ -59,6 +59,10 @@ namespace MSeries {
             progress_detail = dim_label ();
             progress_detail.margin_top = 6;
             progress_detail.margin_bottom = 6;
+            // Long enough to carry the reason when the status is unavailable.
+            progress_detail.ellipsize = Pango.EllipsizeMode.NONE;
+            progress_detail.wrap = true;
+            progress_detail.max_width_chars = 40;
             menu.append (progress);
             menu.append (progress_detail);
 
@@ -251,6 +255,8 @@ namespace MSeries {
             string state = data != null ? (str (data, "state") != "" ? str (data, "state") : "offline") : "offline";
             bool scanning = state == "scanning" || state == "stopping";
             bool offline = data == null || state == "offline";
+            // The service answers but refused or garbled its status: say so, never "Up to date".
+            bool unavailable = state == "unavailable";
 
             // Header: one calm sentence about where things stand.
             string status;
@@ -258,6 +264,7 @@ namespace MSeries {
             else if (offline) status = _("Scanner service is not running");
             else if (state == "stopping") status = _("Stopping scan…");
             else if (scanning) status = _("Scanning…");
+            else if (unavailable) status = _("Status unavailable");
             else if (state == "attention") status = _("Needs attention");
             else status = _("Up to date");
             header.secondary_text = status;
@@ -276,6 +283,7 @@ namespace MSeries {
                 if (has (scan, "elapsed_seconds")) parts += duration (scan.get_int_member ("elapsed_seconds"));
                 detail = string.joinv (" · ", parts);
             }
+            if (unavailable) detail = str (data, "reason");
             set_info (progress_detail, detail);
 
             // Alerts: plain rows with a symbolic icon, no tinted boxes.
@@ -306,7 +314,7 @@ namespace MSeries {
             string devices = "";
             string network = "";
             string last = "";
-            if (data != null && !offline) {
+            if (data != null && !offline && !unavailable) {
                 if (has (data, "hosts")) {
                     int64 hosts = data.get_int_member ("hosts");
                     devices = ngettext ("%d device", "%d devices", (ulong) hosts).printf ((int) hosts);
@@ -338,7 +346,7 @@ namespace MSeries {
 
             // Panel icon: shape carries the state; the dock carries progress and the alert count.
             string icon = scanning ? ICON_SCANNING : (state == "attention" ? ICON_ATTENTION : ICON_IDLE);
-            update_panel (icon, offline, _("Network Scanner"), status);
+            update_panel (icon, offline || unavailable, _("Network Scanner"), status);
             update_launcher (scanning, progress.visible ? progress.fraction : 0.0, alert_count);
         }
 
