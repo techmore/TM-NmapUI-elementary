@@ -68,3 +68,31 @@ def test_devices_are_sorted_numerically_and_fill_host_count():
     out = summary.summarize(HEALTH, {"active_jobs": []}, {"history": []}, None, live)
     assert [d["ip"] for d in out["devices"]] == ["10.0.0.3", "10.0.0.20"]
     assert out["hosts"] == 2 and out["devices"][1]["open_ports"] == 1
+
+
+def test_refused_status_is_unavailable_not_idle():
+    for status in (401, 503):
+        out = summary.summarize(HEALTH, None, None, None, runtime_status=status)
+        assert out["state"] == "unavailable" and f"HTTP {status}" in out["reason"]
+        assert out["alerts"] == [] and out["last_scan"] is None
+
+
+def test_malformed_status_is_unavailable():
+    for runtime in ({"error": "Unauthorized"}, {"active_jobs": None}, {"active_jobs": [7]},
+                    {"active_jobs": [{"job_type": "scan", "status": "running", "details": {"progress": "50"}}]},
+                    {"active_jobs": [{"job_type": "scan", "status": "running", "paused": "no"}]}):
+        out = summary.summarize(HEALTH, runtime, None, None)
+        assert out["state"] == "unavailable" and "couldn't be read" in out["reason"]
+
+
+def test_redirect_to_login_is_recorded_as_refusal(monkeypatch):
+    import io
+    import urllib.error
+
+    def refuse(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 302, "Found", {}, io.BytesIO(b""))
+
+    monkeypatch.setattr(summary._opener, "open", refuse)
+    statuses = {}
+    assert summary.get("/api/runtime/status", statuses) is None
+    assert statuses == {"/api/runtime/status": 302}

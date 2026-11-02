@@ -16,11 +16,27 @@ import urllib.request
 BASE = os.environ.get("NMAPUI_URL", "http://127.0.0.1:9000").rstrip("/")
 
 
-def get(path):
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect (for example to /login) is a refusal, not data."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_opener = urllib.request.build_opener(_NoRedirect)
+
+
+def get(path, statuses=None):
+    """GET JSON from the engine. When `statuses` is a dict, record the HTTP status of a refusal."""
     try:
-        with urllib.request.urlopen(BASE + path, timeout=3) as response:
+        request = urllib.request.Request(BASE + path, headers={"Accept": "application/json"})
+        with _opener.open(request, timeout=3) as response:
             return json.load(response)
-    except (OSError, ValueError, urllib.error.URLError):
+    except urllib.error.HTTPError as error:
+        if statuses is not None:
+            statuses[path] = error.code
+        return None
+    except (OSError, ValueError):
         return None
 
 
@@ -63,8 +79,49 @@ def number(value):
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def summarize(health, runtime, history, auto, live=None):
-    out = {"state": "offline", "label": "Scanner service is not running", "version": None, "progress": None,
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def runtime_valid(runtime):
+    """Same rule as the app's RuntimeSchema: only a readable snapshot can say the scanner is idle."""
+    if not isinstance(runtime, dict) or not isinstance(runtime.get("active_jobs"), list):
+        return False
+    for job in runtime["active_jobs"]:
+        if not isinstance(job, dict) or not isinstance(job.get("job_type"), str) or not job["job_type"]:
+            return False
+        if job.get("status") not in ("running", "cancelling"):
+            return False
+        if job["job_type"] != "scan":
+            continue
+        if any(key in job and not isinstance(job[key], bool) for key in ("paused", "pause_requested")):
+            return False
+        details = job.get("details")
+        if details is None:
+            continue
+        if not isinstance(details, dict):
+            return False
+        if any(details.get(key) is not None and not isinstance(details[key], str) for key in ("message", "target")):
+            return False
+        if any(details.get(key) is not None and not _is_number(details[key]) for key in ("progress", "host_count")):
+            return False
+        if details.get("host_count") is not None and not 0 <= details["host_count"] <= 2**31 - 1:
+            return False
+    return True
+
+
+def unavailable_reason(status):
+    if status in (401, 403) or (status is not None and 300 <= status < 400):
+        return f"The scanner refused the status request (HTTP {status}). Sign in to the scanner, or allow local access."
+    if status == 503:
+        return "The scanner refuses status requests until its sign-in is set up securely (HTTP 503)."
+    if status is not None:
+        return f"The scanner answered the status request with HTTP {status}."
+    return "The scanner's status reply couldn't be read."
+
+
+def summarize(health, runtime, history, auto, live=None, runtime_status=None):
+    out = {"state": "offline", "label": "Scanner service is not running", "reason": None, "version": None, "progress": None,
            "message": None, "hosts": None, "changes": None, "critical": None, "last_scan": None,
            "last_customer": None, "monitor": None, "alerts": [], "tools_missing": [], "network": None, "scan": None, "devices": []}
     if not isinstance(health, dict):
@@ -73,8 +130,13 @@ def summarize(health, runtime, history, auto, live=None):
     out["network"] = network_info(health.get("default_interface"))
     tools = health.get("tool_versions") or {}
     out["tools_missing"] = sorted(name for name in ("nmap",) if str(tools.get(name, "")).lower().startswith("not installed"))
+    if not runtime_valid(runtime):
+        # The service answers but its activity can't be read; never report that as idle.
+        out["state"], out["label"] = "unavailable", "Status unavailable"
+        out["reason"] = unavailable_reason(runtime_status)
+        return out
     out["state"], out["label"] = "idle", "Idle"
-    jobs = (runtime or {}).get("active_jobs") or []
+    jobs = runtime["active_jobs"]
     scan = next((j for j in jobs if j.get("job_type") == "scan"), None)
     if scan:
         details = scan.get("details") or {}
@@ -128,8 +190,11 @@ def summarize(health, runtime, history, auto, live=None):
 
 
 def main():
-    print(json.dumps(summarize(get("/api/health"), get("/api/runtime/status"), get("/api/runtime/history"),
-                               get("/api/auto_scan/status"), get("/api/runtime/live-hosts"))))
+    statuses = {}
+    runtime = get("/api/runtime/status", statuses)
+    print(json.dumps(summarize(get("/api/health"), runtime, get("/api/runtime/history"),
+                               get("/api/auto_scan/status"), get("/api/runtime/live-hosts"),
+                               runtime_status=statuses.get("/api/runtime/status"))))
     return 0
 
 
