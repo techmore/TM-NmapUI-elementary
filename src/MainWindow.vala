@@ -40,7 +40,7 @@ namespace NmapUI {
         private Granite.Toast toast;
         private string? last_download_path = null;
         private bool syncing_tabs = false;
-        private bool ever_loaded = false;
+        private PagePresentation page = new PagePresentation ();
         private int unread_scan_results = 0;
 
         public MainWindow (Application app) {
@@ -70,7 +70,7 @@ namespace NmapUI {
             });
 
             on_backend_changed ();
-            web.load_uri (((Application) application).origin + "/");
+            load_scanner_page ();
         }
 
         // --- Construction -------------------------------------------------------------------
@@ -223,6 +223,16 @@ namespace NmapUI {
             });
             stack.add_named (offline_page, "offline");
 
+            var page_error = new Granite.Placeholder (_("The Scanner Page Couldn’t Load")) {
+                description = _("The scanner service is running, but its page didn’t load. Try again."),
+                icon = new ThemedIcon ("dialog-warning"),
+                halign = Gtk.Align.CENTER,
+                valign = Gtk.Align.CENTER
+            };
+            page_error.append_button (new ThemedIcon ("view-refresh"), _("Reload"),
+                _("Loads the scanner page again")).clicked.connect (load_scanner_page);
+            stack.add_named (page_error, "page-error");
+
             var starting_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 12) {
                 halign = Gtk.Align.CENTER,
                 valign = Gtk.Align.CENTER
@@ -253,6 +263,8 @@ namespace NmapUI {
             add_simple_action ("reload", () => {
                 if (stack.visible_child_name == "web") {
                     web.reload ();
+                } else if (stack.visible_child_name == "page-error") {
+                    load_scanner_page ();
                 } else {
                     backend.poll.begin ();
                 }
@@ -297,9 +309,12 @@ namespace NmapUI {
         // --- Tabs -------------------------------------------------------------------------
 
         private void show_tab (string name) {
-            if (stack == null || stack.visible_child_name != "web") {
+            // Kept until the page can take it, so Ctrl+3 pressed during startup still opens Reports.
+            page.request_tab (name);
+            if (stack == null || stack.visible_child_name != "web" || !page.can_navigate ()) {
                 return;
             }
+            page.take_tab ();
             var script = "if (window.location.hash !== '#%s') { window.location.hash = '#%s'; }".printf (name, name);
             web.evaluate_javascript.begin (script, -1, null, null, null);
         }
@@ -359,24 +374,31 @@ namespace NmapUI {
             status_chip.update_property (Gtk.AccessibleProperty.LABEL, text,
                                          Gtk.AccessibleProperty.DESCRIPTION, tooltip, -1);
 
-            if (backend.state == ServiceState.STARTING) {
-                stack.visible_child_name = "starting";
-            } else if (backend.state == ServiceState.OFFLINE) {
+            bool offline = backend.state == ServiceState.OFFLINE;
+            bool starting = backend.state == ServiceState.STARTING;
+            if (offline) {
                 offline_start_button.sensitive = backend.unit_installed ();
                 offline_start_button.tooltip_text = offline_start_button.sensitive ? ""
                     : _("No %s user unit is installed; run scripts/install-backend.sh first").printf (backend.unit);
-                stack.visible_child_name = "offline";
-            } else if (stack.visible_child_name != "web" && ever_loaded) {
-                stack.visible_child_name = "web";
             }
+            starting_label.label = starting || offline ? _("Starting the scanner service…") : _("Loading the scanner page…");
+            stack.visible_child_name = page.visible_page (offline, starting);
             reload_button.sensitive = backend.state != ServiceState.STARTING;
             // Tabs only mean something while the scanner page is showing.
             tabs.sensitive = stack.visible_child_name == "web";
         }
 
+        private void load_scanner_page () {
+            // Mark the load as started before WebKit or the next health poll can start another one.
+            page.started ();
+            on_backend_changed ();
+            web.load_uri (((Application) application).origin + "/");
+        }
+
+        // After any outage the engine restarted, so load its page afresh (unless a load is running).
         private void on_backend_online () {
-            if (!ever_loaded || stack.visible_child_name != "web") {
-                web.load_uri (((Application) application).origin + "/");
+            if (!page.loading) {
+                load_scanner_page ();
             }
         }
 
@@ -399,23 +421,31 @@ namespace NmapUI {
         // --- WebKit -----------------------------------------------------------------------------
 
         private void on_load_changed (WebKit.LoadEvent event) {
-            if (event == WebKit.LoadEvent.FINISHED) {
-                ever_loaded = true;
-                if (backend.state != ServiceState.OFFLINE && backend.state != ServiceState.STARTING) {
-                    stack.visible_child_name = "web";
+            if (event == WebKit.LoadEvent.STARTED) {
+                page.started ();
+            } else if (event == WebKit.LoadEvent.FINISHED && page.finished ()) {
+                on_backend_changed ();
+                var pending = page.pending_tab;
+                if (pending != null) {
+                    show_tab (pending);
+                } else {
+                    sync_tabs_from_uri ();
                 }
-                sync_tabs_from_uri ();
             }
         }
 
         private bool on_load_failed (WebKit.LoadEvent event, string uri, Error error) {
-            if (error.matches (WebKit.NetworkError.quark (), WebKit.NetworkError.CANCELLED)) {
+            // A load replaced by another one, or a link that turned into a download: the current
+            // page is still showing, so nothing failed.
+            if (error.matches (WebKit.NetworkError.quark (), WebKit.NetworkError.CANCELLED)
+                || error.matches (WebKit.PolicyError.quark (), WebKit.PolicyError.FRAME_LOAD_INTERRUPTED_BY_POLICY_CHANGE)) {
                 return false;
             }
+            // A running service whose page failed is not "offline": show the page error, and let the
+            // next poll switch to the offline page if the service is really gone.
+            page.load_failed ();
+            on_backend_changed ();
             backend.poll.begin ();
-            if (backend.state == ServiceState.OFFLINE || !ever_loaded) {
-                stack.visible_child_name = backend.state == ServiceState.STARTING ? "starting" : "offline";
-            }
             return true;
         }
 
