@@ -20,11 +20,13 @@ a Granite / GTK 4 window, a Wingpanel indicator and a per-user scanner service.
 | `src/` | **Network Scanner** (`io.github.techmore.NmapUI`), a Vala app. Pantheon headerbar with segmented tabs, a live status chip, system light/dark, scan-finished notifications, report download toasts, and a Granite placeholder that starts the service when it is down. |
 | `indicator/` | Wingpanel indicator: one symbolic panel icon whose shape follows the scanner state, and a plain elementary menu with the state, scan progress, alerts, a short summary, Start Scanner Service (when stopped) and Open Network Scanner. |
 | `helper/nmapui-summary` | One-shot JSON summary of the local scanner (loopback API only) used by the indicator. |
-| `data/` | Desktop entry, AppStream metadata, icons and the `nmapui.service` user-unit template. |
-| `scripts/` | `install.sh` (build + install the app and indicator), `install-backend.sh` (clone the engine, create its venv, install the service), `snapshot.sh` (headless renders for review). |
+| `data/` | Desktop entry, AppStream metadata, icons, the `nmapui.service` user-unit template and `engine-revision`, the TM-NmapUI commit the installer deploys. |
+| `scripts/` | `install.sh` (build + install the app and indicator), `install-backend.sh` (clone the pinned engine, create its venv, install the service), `snapshot.sh` (headless renders for review). |
 
-The scanner engine itself is not in this repository. It is the Flask application on
-TM-NmapUI's `main` branch, running on this computer as `nmapui.service`, bound to `127.0.0.1:9000`.
+The scanner engine itself is not in this repository. It is the Flask application in
+TM-NmapUI, at the commit pinned in `data/engine-revision` (currently `41e983c`, the first with the
+`NmapUI-elementary` theme opt-in this app relies on), running on this computer as `nmapui.service`,
+bound to `127.0.0.1:9000`.
 This app never implements a second scanning engine; it gives the existing one a native home.
 
 ## Install
@@ -39,12 +41,15 @@ scripts/install.sh
 
 That builds and installs the app into `~/.local`, installs the Wingpanel indicator
 system-wide (sudo), pins **Network Scanner** to the dock, and runs `scripts/install-backend.sh`,
-which clones TM-NmapUI into `~/.local/share/nmapui/app`, creates its virtual environment,
-installs Chromium for PDF reports, and enables the loopback-only user service.
+which clones TM-NmapUI into `~/.local/share/nmapui/app` at the pinned commit, creates its virtual
+environment, installs Chromium for PDF reports, and enables the loopback-only user service.
+`sudo` is used only for `apt-get` with explicit package names; nothing from the engine checkout or
+its virtual environment runs as root.
 
 - `scripts/install.sh --no-indicator` skips the Wingpanel module; `--no-backend` skips the engine.
 - `NMAPUI_APP_DIR=~/Projects/TM-NmapUI scripts/install-backend.sh` runs the service from an existing checkout.
-- `NMAPUI_REF=<branch|tag|sha> scripts/install-backend.sh` pins the engine revision.
+- `NMAPUI_REF=<full commit sha> scripts/install-backend.sh` deploys another reviewed engine commit.
+  Branch and tag names are refused, so a reinstall never deploys an unreviewed engine.
 - The indicator loads at the next login; the installer never restarts Wingpanel.
 - Unprivileged scans use connect mode. SYN/OS/ARP scans need TM-NmapUI's root service
   (`packaging/ubuntu/install-service.sh`); nothing here grants raw-socket capabilities.
