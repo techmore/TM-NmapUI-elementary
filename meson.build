@@ -46,12 +46,6 @@ executable(
   install: true,
 )
 
-test('time-format', executable(
-  'test-time-format',
-  'indicator/TimeFormat.vala', 'tests/test_time_format.vala',
-  dependencies: [dependency('glib-2.0'), dependency('gobject-2.0')],
-))
-
 # One-shot JSON summary of the local scanner, shared by the Wingpanel indicator.
 install_data('helper/nmapui-summary', install_dir: bindir, install_mode: 'rwxr-xr-x')
 
@@ -64,3 +58,9 @@ gnome.post_install(
   gtk_update_icon_cache: true,
   update_desktop_database: true,
 )
+
+test('time-format', executable(
+  'test-time-format',
+  'indicator/TimeFormat.vala', 'tests/test_time_format.vala',
+  dependencies: [dependency('glib-2.0'), dependency('gobject-2.0')],
+))

@@ -28,6 +28,16 @@ def test_cancelling_scan_is_stopping():
     assert summary.summarize(HEALTH, runtime, None, None)["state"] == "stopping"
 
 
+def test_elapsed_handles_naive_local_and_offset_start_times():
+    import datetime
+    for started in (datetime.datetime.now() - datetime.timedelta(minutes=5),
+                    datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)):
+        runtime = {"active_jobs": [{"job_type": "scan", "status": "running", "started_at": started.isoformat(),
+                                    "details": {}}]}
+        out = summary.summarize(HEALTH, runtime, None, None)
+        assert 290 <= out["scan"]["elapsed_seconds"] <= 310
+
+
 def test_changes_and_critical_cves_raise_attention():
     history = {"history": [{"timestamp": "2026-10-19T10:00:00", "customer_name": "Penn", "host_count": 24,
                             "critical_cves": 2, "diff_summary": {"has_changes": True}}]}
@@ -69,12 +79,3 @@ def test_devices_are_sorted_numerically_and_fill_host_count():
     assert [d["ip"] for d in out["devices"]] == ["10.0.0.3", "10.0.0.20"]
     assert out["hosts"] == 2 and out["devices"][1]["open_ports"] == 1
 
-
-def test_elapsed_handles_naive_local_and_offset_start_times():
-    import datetime
-    for started in (datetime.datetime.now() - datetime.timedelta(minutes=5),
-                    datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)):
-        runtime = {"active_jobs": [{"job_type": "scan", "status": "running", "started_at": started.isoformat(),
-                                    "details": {}}]}
-        out = summary.summarize(HEALTH, runtime, None, None)
-        assert 290 <= out["scan"]["elapsed_seconds"] <= 310
