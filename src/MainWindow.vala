@@ -2,6 +2,11 @@
  * something is happening), a WebKit view of the scanner UI, and a Granite placeholder when the
  * service is down. */
 namespace NmapUI {
+    /* GTK 4.10 deprecated the GtkStyleContext class but kept this function as the way to add
+     * app-wide CSS. The Vala binding marks the whole class deprecated, so bind the function itself. */
+    [CCode (cname = "gtk_style_context_add_provider_for_display")]
+    extern void add_display_style_provider (Gdk.Display display, Gtk.StyleProvider provider, uint priority);
+
     public class MainWindow : Gtk.ApplicationWindow {
         public const string[] TABS = { "dashboard", "history", "reports", "customers", "logs", "settings" };
         private const string[] TAB_LABELS = { N_("Dashboard"), N_("History"), N_("Reports"), N_("Customers"), N_("Logs"), N_("Settings") };
@@ -78,8 +83,7 @@ namespace NmapUI {
         private static void install_chrome_css () {
             var provider = new Gtk.CssProvider ();
             provider.load_from_string (CHROME_CSS);
-            Gtk.StyleContext.add_provider_for_display (Gdk.Display.get_default (), provider,
-                                                       Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+            add_display_style_provider (Gdk.Display.get_default (), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
         }
 
         private void build_web_view () {

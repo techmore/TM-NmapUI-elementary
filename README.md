@@ -17,7 +17,7 @@ a Granite / GTK 4 window, a Wingpanel indicator and a per-user scanner service.
 
 | Piece | What it is |
 |---|---|
-| `src/` | **Network Scanner** (`io.github.techmore.NmapUI`), a Vala app. Pantheon headerbar with segmented tabs, a live status chip, system light/dark, scan-finished notifications, report download toasts, and a Granite placeholder that starts the service when it is down. |
+| `src/` | **Network Scanner** (`io.github.techmore.NmapUI`), a Vala app. Pantheon headerbar with segmented tabs, scan progress in the header while a scan runs, system light/dark, scan-finished notifications, report download toasts, and a Granite placeholder that starts the service when it is down. |
 | `indicator/` | Wingpanel indicator: one symbolic panel icon whose shape follows the scanner state, and a plain elementary menu with the state, scan progress, alerts, a short summary, Start Scanner Service (when stopped) and Open Network Scanner. |
 | `helper/nmapui-summary` | One-shot JSON summary of the local scanner (loopback API only) used by the indicator. |
 | `data/` | Desktop entry, AppStream metadata, icons, the `nmapui.service` user-unit template and `engine-revision`, the TM-NmapUI commit the installer deploys. |
